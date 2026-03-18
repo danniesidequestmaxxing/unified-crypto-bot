@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 
 from src.ai.prompts import (
     FED_ANALYSIS_PROMPT,
+    MACRO_IMPACT_PROMPT,
     MARKET_SNAPSHOT_PROMPT,
     NEWS_SUMMARY_PROMPT,
     WEEKLY_REPORT_PROMPT,
@@ -79,6 +80,22 @@ class MarketAnalyst:
         return await self.claude.complete_deep(
             messages=[{"role": "user", "content": prompt}],
             max_tokens=2000,
+        )
+
+    async def macro_impact(
+        self, forwarded_data: str, user_question: str = "",
+        btc_price: str = "",
+    ) -> str:
+        """Analyze macro/intel data impact on BTC."""
+        context_parts = [f"Forwarded data:\n{forwarded_data}"]
+        if btc_price:
+            context_parts.append(f"Current BTC price: {btc_price}")
+        if user_question:
+            context_parts.append(f"User's question: {user_question}")
+        prompt = MACRO_IMPACT_PROMPT.format(context="\n\n".join(context_parts))
+        return await self.claude.complete_deep(
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=1200,
         )
 
     async def fed_analysis(self, summary: str) -> str:
