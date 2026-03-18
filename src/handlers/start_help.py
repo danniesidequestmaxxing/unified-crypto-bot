@@ -13,6 +13,10 @@ HELP_TEXT = """<b>Unified Crypto Intelligence Bot</b>
 /weekly — Weekly catalyst report with predictions
 /fed — Polymarket Fed rate predictions + analysis
 
+<b>Price &amp; Market Data (CoinGecko)</b>
+/price &lt;coin&gt; — Price, volume, market cap lookup
+/top [N] — Top N coins by market cap (default 10)
+
 <b>Trading Analysis (Claude Sonnet)</b>
 /analyze &lt;asset&gt; [tf] — Chart + AI trade analysis
 /script &lt;description&gt; — Generate PineScript v6 code

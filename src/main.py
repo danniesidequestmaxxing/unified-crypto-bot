@@ -16,6 +16,7 @@ from src.ai.market_analyst import MarketAnalyst
 from src.clients.binance import BinanceClient
 from src.clients.bybit import BybitClient
 from src.clients.claude import ClaudeService
+from src.clients.coingecko import CoinGeckoClient
 from src.clients.coinglass import CoinGlassHobbyistClient, CoinGlassPrimeClient
 from src.clients.elfa import ElfaClient
 from src.clients.hyperliquid import HyperliquidClient
@@ -72,6 +73,11 @@ async def main() -> None:
     elfa_rl = TokenBucket(settings.elfa_rpm)
     elfa = ElfaClient(api_key=settings.elfa_api_key, rate_limiter=elfa_rl)
 
+    coingecko_rl = TokenBucket(settings.coingecko_rpm)
+    coingecko = CoinGeckoClient(
+        api_key=settings.coingecko_api_key, rate_limiter=coingecko_rl,
+    )
+
     cg_hobbyist_rl = TokenBucket(settings.coinglass_hobbyist_rpm)
     cg_hobbyist = CoinGlassHobbyistClient(
         api_key=settings.coinglass_api_key, rate_limiter=cg_hobbyist_rl,
@@ -109,6 +115,7 @@ async def main() -> None:
         "hyperliquid": hyperliquid,
         "polymarket": polymarket,
         "elfa": elfa,
+        "coingecko": coingecko,
         "market_analyst": market_analyst,
         "trading_engine": trading_engine,
     })
@@ -168,7 +175,7 @@ async def main() -> None:
         await app.stop()
 
     # Close all clients
-    for client in (binance, bybit, hyperliquid, polymarket, elfa, cg_hobbyist, cg_prime):
+    for client in (binance, bybit, hyperliquid, polymarket, elfa, coingecko, cg_hobbyist, cg_prime):
         await client.close()
     await db.close()
     log.info("shutdown_complete")
