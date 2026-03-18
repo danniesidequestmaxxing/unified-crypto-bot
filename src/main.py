@@ -22,6 +22,7 @@ from src.clients.elfa import ElfaClient
 from src.clients.hyperliquid import HyperliquidClient
 from src.clients.polymarket import PolymarketClient
 from src.config import Settings
+from src.core.coin_registry import CoinRegistry
 from src.core.database import Database
 from src.core.logging import setup_logging
 from src.core.rate_limiter import TokenBucket
@@ -86,6 +87,16 @@ async def main() -> None:
     cg_prime = CoinGlassPrimeClient(
         api_key=settings.coinglass_api_key, rate_limiter=cg_prime_rl,
     )
+
+    # ── Coin Registry (top 500 from CoinGecko) ─────────
+    coin_registry = CoinRegistry(
+        coingecko, on_update=TradingEngine.update_coin_registry,
+    )
+    try:
+        await coin_registry.load(pages=5)  # 5 pages × 100 = top 500
+    except Exception as exc:
+        log.warning("coin_registry_initial_load_failed", error=str(exc))
+    coin_registry.start_refresh()
 
     # ── AI Engines ──────────────────────────────────────
     market_analyst = MarketAnalyst(claude)
@@ -176,7 +187,8 @@ async def main() -> None:
         await app.updater.stop()
         await app.stop()
 
-    # Close all clients
+    # Close registry and clients
+    coin_registry.stop_refresh()
     for client in (binance, bybit, hyperliquid, polymarket, elfa, coingecko, cg_hobbyist, cg_prime):
         await client.close()
     await db.close()

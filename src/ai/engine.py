@@ -20,8 +20,8 @@ from src.core.database import Database
 
 log = structlog.get_logger()
 
-# Bare ticker → CoinGecko ID mapping
-COIN_TO_GECKO_ID = {
+# Bare ticker → CoinGecko ID mapping (static fallback, overridden by CoinRegistry at runtime)
+COIN_TO_GECKO_ID: dict[str, str] = {
     "BTC": "bitcoin", "ETH": "ethereum", "SOL": "solana", "BNB": "binancecoin",
     "XRP": "ripple", "DOGE": "dogecoin", "ADA": "cardano", "AVAX": "avalanche-2",
     "DOT": "polkadot", "MATIC": "matic-network", "LINK": "chainlink",
@@ -31,11 +31,10 @@ COIN_TO_GECKO_ID = {
     "SEI": "sei-network", "JUP": "jupiter-exchange-solana", "WIF": "dogwifcoin",
     "PEPE": "pepe", "BONK": "bonk", "FIL": "filecoin", "RENDER": "render-token",
     "TAO": "bittensor", "WLD": "worldcoin-wld", "STRK": "starknet",
-    "AAVE": "aave", "MKR": "maker", "PENDLE": "pendle",
-    "ASTER": "aster-2",
+    "AAVE": "aave", "MKR": "maker", "PENDLE": "pendle", "ASTER": "aster-2",
 }
 
-KNOWN_COINS = set(COIN_TO_GECKO_ID.keys())
+KNOWN_COINS: set[str] = set(COIN_TO_GECKO_ID.keys())
 
 # Map user-friendly timeframe strings to Binance interval codes
 TIMEFRAME_MAP = {
@@ -63,6 +62,13 @@ class TradingEngine:
         self.db = db
         self.coinglass = coinglass
         self.coingecko = coingecko
+
+    @staticmethod
+    def update_coin_registry(symbol_to_id: dict[str, str], known: set[str]) -> None:
+        """Update module-level coin mappings from CoinRegistry."""
+        global COIN_TO_GECKO_ID, KNOWN_COINS
+        COIN_TO_GECKO_ID = symbol_to_id
+        KNOWN_COINS = known
 
     async def _fetch_market_data(self, symbol: str, timeframe: str = "4h") -> str:
         """Fetch live price, 24h stats, recent klines, and derived volatility metrics."""
