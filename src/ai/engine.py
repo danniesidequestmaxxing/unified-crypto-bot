@@ -4,6 +4,7 @@ Ported from telegram-pinescript-bot, refactored to use shared ClaudeService.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 from collections import Counter
@@ -13,9 +14,27 @@ import structlog
 from src.ai.prompts import TRADING_SYSTEM_PROMPT
 from src.clients.binance import BinanceClient
 from src.clients.claude import ClaudeService
+from src.clients.coingecko import CoinGeckoClient
+from src.clients.coinglass import CoinGlassHobbyistClient
 from src.core.database import Database
 
 log = structlog.get_logger()
+
+# Bare ticker → CoinGecko ID mapping
+COIN_TO_GECKO_ID = {
+    "BTC": "bitcoin", "ETH": "ethereum", "SOL": "solana", "BNB": "binancecoin",
+    "XRP": "ripple", "DOGE": "dogecoin", "ADA": "cardano", "AVAX": "avalanche-2",
+    "DOT": "polkadot", "MATIC": "matic-network", "LINK": "chainlink",
+    "UNI": "uniswap", "ATOM": "cosmos", "LTC": "litecoin", "ARB": "arbitrum",
+    "OP": "optimism", "APT": "aptos", "SUI": "sui", "NEAR": "near",
+    "FTM": "fantom", "INJ": "injective-protocol", "TIA": "celestia",
+    "SEI": "sei-network", "JUP": "jupiter-exchange-solana", "WIF": "dogwifcoin",
+    "PEPE": "pepe", "BONK": "bonk", "FIL": "filecoin", "RENDER": "render-token",
+    "TAO": "bittensor", "WLD": "worldcoin-wld", "STRK": "starknet",
+    "AAVE": "aave", "MKR": "maker", "PENDLE": "pendle",
+}
+
+KNOWN_COINS = set(COIN_TO_GECKO_ID.keys())
 
 # Map user-friendly timeframe strings to Binance interval codes
 TIMEFRAME_MAP = {
@@ -31,11 +50,18 @@ class TradingEngine:
     """AI-powered trading analysis engine with self-learning."""
 
     def __init__(
-        self, claude: ClaudeService, binance: BinanceClient, db: Database,
+        self,
+        claude: ClaudeService,
+        binance: BinanceClient,
+        db: Database,
+        coinglass: CoinGlassHobbyistClient | None = None,
+        coingecko: CoinGeckoClient | None = None,
     ) -> None:
         self.claude = claude
         self.binance = binance
         self.db = db
+        self.coinglass = coinglass
+        self.coingecko = coingecko
 
     async def _fetch_market_data(self, symbol: str, timeframe: str = "4h") -> str:
         """Fetch live price, 24h stats, recent klines, and derived volatility metrics."""
@@ -104,7 +130,7 @@ class TradingEngine:
                     f"  Candle streak: {streak:+d} ({'bullish' if streak > 0 else 'bearish' if streak < 0 else 'neutral'})\n"
                 )
 
-            return (
+            binance_block = (
                 f"\n--- LIVE MARKET DATA (Binance) ---\n"
                 f"Symbol: {symbol}\nCurrent Price: {price}\n"
                 f"24h High: {high_24h}\n24h Low: {low_24h}\n"
@@ -114,9 +140,97 @@ class TradingEngine:
                 + volatility_block
                 + "\n--- END MARKET DATA ---\n"
             )
+
+            # Enrich with CoinGlass & CoinGecko data (non-blocking)
+            extra_block = await self._fetch_extra_market_data(symbol)
+            return binance_block + extra_block
+
         except Exception as e:
             log.warning("market_data_fetch_failed", symbol=symbol, error=str(e))
             return f"\n(Could not fetch live data for {symbol})\n"
+
+    async def _fetch_extra_market_data(self, symbol: str) -> str:
+        """Fetch supplementary data from CoinGlass and CoinGecko (best-effort)."""
+        # Strip USDT suffix to get bare coin
+        bare = symbol.replace("USDT", "").replace("USD", "").replace("BUSD", "")
+        parts: list[str] = []
+
+        # Build tasks for parallel fetch
+        tasks: dict[str, asyncio.Task] = {}
+        if self.coinglass:
+            tasks["funding"] = asyncio.ensure_future(
+                self.coinglass.get_funding_rate(bare)
+            )
+            tasks["oi"] = asyncio.ensure_future(
+                self.coinglass.get_aggregated_oi_history(bare, interval="1h", limit=4)
+            )
+        gecko_id = COIN_TO_GECKO_ID.get(bare)
+        if self.coingecko and gecko_id:
+            tasks["gecko"] = asyncio.ensure_future(
+                self.coingecko.get_price(gecko_id)
+            )
+
+        if not tasks:
+            return ""
+
+        results = await asyncio.gather(*tasks.values(), return_exceptions=True)
+        data = dict(zip(tasks.keys(), results))
+
+        # CoinGecko price / market cap
+        gecko = data.get("gecko")
+        if gecko and not isinstance(gecko, Exception) and gecko_id:
+            coin_data = gecko.get(gecko_id, {})
+            if coin_data:
+                mcap = coin_data.get("usd_market_cap")
+                vol = coin_data.get("usd_24h_vol")
+                change = coin_data.get("usd_24h_change")
+                mcap_str = f"${mcap / 1e9:.2f}B" if mcap else "N/A"
+                vol_str = f"${vol / 1e9:.2f}B" if vol else "N/A"
+                change_str = f"{change:+.2f}%" if change else "N/A"
+                parts.append(
+                    f"\n--- COINGECKO DATA ---\n"
+                    f"Market Cap: {mcap_str}\n"
+                    f"24h Volume (USD): {vol_str}\n"
+                    f"24h Change: {change_str}\n"
+                )
+
+        # CoinGlass funding rate
+        funding = data.get("funding")
+        if funding and not isinstance(funding, Exception):
+            fr_data = funding.get("data") if isinstance(funding, dict) else None
+            if fr_data and isinstance(fr_data, list) and len(fr_data) > 0:
+                rates = []
+                for ex in fr_data:
+                    rate = ex.get("rate")
+                    name = ex.get("exchangeName", "")
+                    if rate is not None:
+                        rates.append(f"  {name}: {float(rate) * 100:.4f}%")
+                if rates:
+                    parts.append(
+                        f"\n--- FUNDING RATES (CoinGlass) ---\n"
+                        + "\n".join(rates[:5])
+                        + "\n"
+                    )
+
+        # CoinGlass OI history
+        oi = data.get("oi")
+        if oi and not isinstance(oi, Exception):
+            oi_data = oi.get("data") if isinstance(oi, dict) else None
+            if oi_data and isinstance(oi_data, list) and len(oi_data) >= 2:
+                try:
+                    latest_oi = float(oi_data[-1].get("openInterest", 0))
+                    prev_oi = float(oi_data[-2].get("openInterest", 0))
+                    if prev_oi > 0:
+                        oi_change = ((latest_oi - prev_oi) / prev_oi) * 100
+                        parts.append(
+                            f"\n--- OPEN INTEREST (CoinGlass) ---\n"
+                            f"Current OI: ${latest_oi / 1e9:.2f}B\n"
+                            f"1h OI Change: {oi_change:+.2f}%\n"
+                        )
+                except (ValueError, TypeError):
+                    pass
+
+        return "".join(parts)
 
     async def _build_learning_context(self, asset: str, timeframe: str) -> str:
         """Build a diagnosed context block from historical signal performance."""
@@ -336,8 +450,16 @@ class TradingEngine:
 # ── Helpers ────────────────────────────────────────────
 
 def _extract_symbol(text: str) -> str | None:
+    # Explicit pair first (BTCUSDT, BTC/USDT, etc.)
     m = re.search(r"\b([A-Z]{2,10}(?:[/-]?USDT?|BUSD))\b", text.upper())
-    return m.group(1).replace("/", "").replace("-", "") if m else None
+    if m:
+        return m.group(1).replace("/", "").replace("-", "")
+    # Bare ticker fallback — match known coins
+    for word in text.upper().split():
+        clean = re.sub(r"[^A-Z]", "", word)
+        if clean in KNOWN_COINS:
+            return f"{clean}USDT"
+    return None
 
 
 def _parse_levels(text: str) -> dict | None:

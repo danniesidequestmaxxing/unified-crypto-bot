@@ -89,7 +89,9 @@ async def main() -> None:
 
     # ── AI Engines ──────────────────────────────────────
     market_analyst = MarketAnalyst(claude)
-    trading_engine = TradingEngine(claude, binance, db)
+    trading_engine = TradingEngine(
+        claude, binance, db, coinglass=cg_hobbyist, coingecko=coingecko,
+    )
 
     # ── Delivery ────────────────────────────────────────
     telegram_delivery = TelegramDelivery(
