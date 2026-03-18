@@ -32,6 +32,7 @@ COIN_TO_GECKO_ID = {
     "PEPE": "pepe", "BONK": "bonk", "FIL": "filecoin", "RENDER": "render-token",
     "TAO": "bittensor", "WLD": "worldcoin-wld", "STRK": "starknet",
     "AAVE": "aave", "MKR": "maker", "PENDLE": "pendle",
+    "ASTER": "aster-2",
 }
 
 KNOWN_COINS = set(COIN_TO_GECKO_ID.keys())
@@ -454,12 +455,35 @@ def _extract_symbol(text: str) -> str | None:
     m = re.search(r"\b([A-Z]{2,10}(?:[/-]?USDT?|BUSD))\b", text.upper())
     if m:
         return m.group(1).replace("/", "").replace("-", "")
-    # Bare ticker fallback — match known coins
+    # Bare ticker fallback — prefer known coins, then try any plausible ticker
+    best_unknown: str | None = None
     for word in text.upper().split():
         clean = re.sub(r"[^A-Z]", "", word)
+        if len(clean) < 2 or len(clean) > 10:
+            continue
         if clean in KNOWN_COINS:
             return f"{clean}USDT"
-    return None
+        # Skip common English words that look like tickers
+        if clean in _TICKER_STOPWORDS:
+            continue
+        if len(clean) >= 3 and best_unknown is None:
+            best_unknown = clean
+    return f"{best_unknown}USDT" if best_unknown else None
+
+
+# Common English words that could be mistaken for tickers
+_TICKER_STOPWORDS = {
+    "THE", "AND", "FOR", "ARE", "BUT", "NOT", "YOU", "ALL", "CAN", "HER",
+    "WAS", "ONE", "OUR", "OUT", "DAY", "GET", "HAS", "HIM", "HIS", "HOW",
+    "ITS", "LET", "MAY", "NEW", "NOW", "OLD", "SEE", "WAY", "WHO", "DID",
+    "GOT", "HIT", "RUN", "SET", "TOP", "USE", "WIN", "BIG", "LOW", "HIGH",
+    "LOOK", "GIVE", "WHAT", "WHEN", "WITH", "THIS", "THAT", "FROM", "HAVE",
+    "WILL", "YOUR", "BEEN", "CALL", "EACH", "MAKE", "LIKE", "LONG", "OVER",
+    "SUCH", "TAKE", "THAN", "THEM", "VERY", "COME", "JUST", "KNOW", "TIME",
+    "SOME", "GOOD", "INTO", "YEAR", "MOST", "ALSO", "BACK", "WANT", "ONLY",
+    "FIRST", "PRICE", "CURRENT", "TRADE", "RECOMMEND", "STRATEGY", "TRADING",
+    "ANALYSIS", "MARKET", "TODAY", "CHECK", "CHART",
+}
 
 
 def _parse_levels(text: str) -> dict | None:

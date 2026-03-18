@@ -35,16 +35,23 @@ _FED_KEYWORDS = re.compile(
 
 def _extract_symbol(text: str) -> str | None:
     """Extract a trading pair from free text (mirrors engine._extract_symbol)."""
-    from src.ai.engine import KNOWN_COINS
+    from src.ai.engine import KNOWN_COINS, _TICKER_STOPWORDS
 
     m = re.search(r"\b([A-Z]{2,10}(?:[/-]?USDT?|BUSD))\b", text.upper())
     if m:
         return m.group(1).replace("/", "").replace("-", "")
+    best_unknown: str | None = None
     for word in text.upper().split():
         clean = re.sub(r"[^A-Z]", "", word)
+        if len(clean) < 2 or len(clean) > 10:
+            continue
         if clean in KNOWN_COINS:
             return f"{clean}USDT"
-    return None
+        if clean in _TICKER_STOPWORDS:
+            continue
+        if len(clean) >= 3 and best_unknown is None:
+            best_unknown = clean
+    return f"{best_unknown}USDT" if best_unknown else None
 
 
 def _should_chart(text: str) -> bool:
