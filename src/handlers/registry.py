@@ -17,6 +17,7 @@ from src.handlers.freeform import handle_message
 from src.handlers.headlines import cmd_headlines
 from src.handlers.market import cmd_market
 from src.handlers.performance import cmd_performance
+from src.handlers.price import cmd_price, cmd_top
 from src.handlers.script import cmd_indicator, cmd_script
 from src.handlers.signals import cmd_autosignal, cmd_signals, cmd_stopsignal
 from src.handlers.social import (
@@ -58,6 +59,10 @@ def register_handlers(app: Application) -> None:
     app.add_handler(CommandHandler("stopsignal", cmd_stopsignal))
     app.add_handler(CommandHandler("signals", cmd_signals))
     app.add_handler(CommandHandler("performance", cmd_performance))
+
+    # Price & market data (CoinGecko)
+    app.add_handler(CommandHandler("price", cmd_price))
+    app.add_handler(CommandHandler("top", cmd_top))
 
     # TradingView webhooks
     app.add_handler(CommandHandler("alerts", cmd_alerts))

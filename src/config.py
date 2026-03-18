@@ -22,6 +22,9 @@ class Settings(BaseSettings):
     # ── CoinGlass ──────────────────────────────────────
     coinglass_api_key: str
 
+    # ── CoinGecko ─────────────────────────────────────
+    coingecko_api_key: str = ""
+
     # ── TradingView Webhooks ───────────────────────────
     webhook_host: str = "0.0.0.0"
     webhook_port: int = 8443
@@ -43,6 +46,7 @@ class Settings(BaseSettings):
     coinglass_hobbyist_rpm: int = 120
     coinglass_prime_rpm: int = 300
     elfa_rpm: int = 100
+    coingecko_rpm: int = 30
 
     # ── Database ───────────────────────────────────────
     db_path: str = "./data/unified.db"

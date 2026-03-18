@@ -1,27 +1,49 @@
-"""CoinGecko API client — BTC market cap (async, no key required)."""
+"""CoinGecko Pro API client — price, market data, and trending coins."""
 from __future__ import annotations
 
-import aiohttp
-import structlog
-
-log = structlog.get_logger()
-
-_TIMEOUT = aiohttp.ClientTimeout(total=10, connect=5)
+from src.clients.base import BaseAPIClient
 
 
-async def get_btc_market_cap() -> float:
-    """Fetch BTC market cap from CoinGecko. Returns 0 on failure."""
-    try:
-        async with aiohttp.ClientSession(timeout=_TIMEOUT) as session:
-            async with session.get(
-                "https://api.coingecko.com/api/v3/simple/price",
-                params={"ids": "bitcoin", "vs_currencies": "usd",
-                        "include_market_cap": "true"},
-                headers={"User-Agent": "Mozilla/5.0"},
-            ) as resp:
-                if resp.ok:
-                    data = await resp.json()
-                    return data.get("bitcoin", {}).get("usd_market_cap", 0)
-    except Exception:
-        pass
-    return 0
+class CoinGeckoClient(BaseAPIClient):
+    """Async CoinGecko Pro API client with rate limiting and retry."""
+
+    BASE_URL = "https://pro-api.coingecko.com/api/v3"
+    AUTH_HEADER = "x-cg-pro-api-key"
+
+    async def get_price(
+        self,
+        ids: str,
+        vs_currencies: str = "usd",
+        include_market_cap: bool = True,
+        include_24hr_vol: bool = True,
+        include_24hr_change: bool = True,
+    ) -> dict:
+        """Fetch price data for one or more coin IDs (comma-separated)."""
+        params: dict = {
+            "ids": ids,
+            "vs_currencies": vs_currencies,
+            "include_market_cap": str(include_market_cap).lower(),
+            "include_24hr_vol": str(include_24hr_vol).lower(),
+            "include_24hr_change": str(include_24hr_change).lower(),
+        }
+        return await self.get("/simple/price", params=params)
+
+    async def get_coins_markets(
+        self,
+        vs_currency: str = "usd",
+        order: str = "market_cap_desc",
+        per_page: int = 100,
+        page: int = 1,
+    ) -> list[dict]:
+        """Fetch coin market data (price, market cap, volume, changes)."""
+        params = {
+            "vs_currency": vs_currency,
+            "order": order,
+            "per_page": per_page,
+            "page": page,
+        }
+        return await self.get("/coins/markets", params=params)
+
+    async def get_trending(self) -> dict:
+        """Fetch trending coins, NFTs, and categories on CoinGecko."""
+        return await self.get("/search/trending")
