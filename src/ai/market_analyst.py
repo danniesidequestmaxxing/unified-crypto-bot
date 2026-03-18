@@ -50,12 +50,16 @@ class MarketAnalyst:
             max_tokens=1000,
         )
 
-    async def news_summary(self, news_items: list[dict]) -> str:
-        """Summarize crypto news headlines."""
+    async def news_summary(
+        self, news_items: list[dict], extra_context: str = "",
+    ) -> str:
+        """Summarize crypto news headlines with optional extra intelligence."""
         headlines = "\n".join(
             f"- [{n['source']}] {n['title']}" for n in news_items
-        )
+        ) if news_items else "(No CoinDesk headlines available)"
         prompt = NEWS_SUMMARY_PROMPT.format(headlines=headlines)
+        if extra_context:
+            prompt += f"\n\nAdditional intelligence:\n{extra_context}"
         return await self.claude.complete_deep(
             messages=[{"role": "user", "content": prompt}],
             max_tokens=1000,

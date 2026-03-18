@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import io
 import re
+from datetime import datetime, timezone
 
 from telegram import InputFile, Update
 from telegram.constants import ChatAction
@@ -16,12 +17,21 @@ from telegram.ext import ContextTypes
 
 from src.chart.generator import fetch_klines, generate_chart
 from src.chart.market_sessions import get_current_sessions
-from src.core.message_utils import send_long
+from src.clients.coindesk import fetch_crypto_news
+from src.core.message_utils import send_long, send_plain_chunks
 
 # Keywords that suggest the user wants a chart / technical analysis
 _ANALYSIS_KEYWORDS = re.compile(
     r"\b(analy[sz]e|chart|look\s+at|check|setup|trade|signal|technical|ta\b|"
     r"breakout|breakdown|price\s+action|entry|long|short|scalp|swing)\b",
+    re.IGNORECASE,
+)
+
+# Keywords that suggest the user wants crypto news / headlines
+_NEWS_KEYWORDS = re.compile(
+    r"\b(news|headlines?|latest\s+(?:crypto|market|bitcoin|btc)|"
+    r"what(?:'s|\s+is)\s+happening|market\s+update|crypto\s+update|"
+    r"what\s+happened|recent\s+events?)\b",
     re.IGNORECASE,
 )
 
@@ -67,6 +77,80 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None
 
     chat_context = ctx.bot_data.setdefault("_chat_context", {})
     context = chat_context.get(chat_id, "")
+
+    # ── News/headlines route ──────────────────────────────────
+    if _NEWS_KEYWORDS.search(text):
+        await db.record_user_call(chat_id)
+        # Extract hours from message (e.g. "last 12 hours")
+        hours = 6
+        hr_match = re.search(r"(\d{1,2})\s*h(?:ou)?rs?", text, re.IGNORECASE)
+        if hr_match:
+            hours = min(int(hr_match.group(1)), 48)
+
+        # Fetch CoinDesk news + Elfa trending narratives in parallel
+        elfa = deps.get("elfa")
+        news_task = fetch_crypto_news(limit=12, hours=hours)
+        narratives_task = (
+            elfa.trending_narratives(timeframe="24h") if elfa else asyncio.sleep(0)
+        )
+        news, narratives_raw = await asyncio.gather(
+            news_task, narratives_task, return_exceptions=True,
+        )
+
+        # Build news items
+        if isinstance(news, Exception) or not news:
+            news = []
+        has_news = news and not (
+            len(news) == 1 and "error" in news[0].get("title", "").lower()
+        )
+
+        # Build narratives context from Elfa AI
+        narratives_text = ""
+        if not isinstance(narratives_raw, (Exception, type(None))):
+            try:
+                items = narratives_raw.get("data", [])
+                if items:
+                    parts = []
+                    for n in items[:8]:
+                        title = n.get("title", n.get("narrative", ""))
+                        summary = n.get("summary", "")
+                        if title:
+                            parts.append(f"- {title}: {summary}" if summary else f"- {title}")
+                    if parts:
+                        narratives_text = "\n\nTrending Crypto Narratives (Elfa AI):\n" + "\n".join(parts)
+            except Exception:
+                pass
+
+        if has_news or narratives_text:
+            analyst = deps["market_analyst"]
+            news_for_summary = news if has_news else []
+            extra_context = narratives_text if narratives_text else ""
+            summary = await analyst.news_summary(news_for_summary, extra_context=extra_context)
+
+            links = ""
+            if has_news:
+                links = "\n".join(
+                    f"- {n['title'][:60]}{'...' if len(n['title']) > 60 else ''}  {n['url']}"
+                    for n in news[:6] if n.get("url")
+                )
+
+            msg = (
+                f"📰 News Summary (Last {hours} Hours)\n\n"
+                f"{summary}\n"
+            )
+            if links:
+                msg += f"\n🔗 Top Links:\n{links}\n"
+            msg += f"\n🕐 {datetime.now(timezone.utc).strftime('%H:%M')} UTC"
+
+            chat_context[chat_id] = summary
+            await send_plain_chunks(update, msg)
+            return
+
+        # No news found
+        await update.message.reply_text(
+            f"📭 No news articles found in the last {hours} hours."
+        )
+        return
 
     await db.record_user_call(chat_id)
 
