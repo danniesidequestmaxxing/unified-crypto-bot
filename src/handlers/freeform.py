@@ -1,7 +1,7 @@
 """Catch-all text handler — routes free-form messages intelligently.
 
 Routing priority:
-1. Forwarded messages / macro data → macro impact analysis (BTC focus)
+1. Forwarded messages / macro data → BTC impact analysis + conditional chart
 2. News keywords → CoinDesk + Elfa AI news summary
 3. Fed/FOMC keywords → Polymarket-enriched Q&A
 4. Explicit chart/trade request with ticker → structured trade analysis + chart
@@ -97,6 +97,41 @@ def _is_macro_data(text: str) -> bool:
     return bool(_MACRO_KEYWORDS.search(text))
 
 
+async def _fetch_btc_price(deps: dict) -> str:
+    """Fetch current BTC price string for context injection."""
+    try:
+        binance = deps["binance"]
+        ticker = await binance.get_ticker_24hr("BTCUSDT")
+        if ticker:
+            price = float(ticker.get("lastPrice", 0))
+            change = float(ticker.get("priceChangePercent", 0))
+            return f"${price:,.0f} ({change:+.2f}% 24h)"
+    except Exception:
+        pass
+    return ""
+
+
+async def _generate_and_send_chart(
+    update: Update, deps: dict, symbol: str, timeframe: str,
+    levels: dict | None = None,
+) -> None:
+    """Generate a candlestick chart and send it as a photo. Non-fatal on failure."""
+    try:
+        binance = deps["binance"]
+        df = await fetch_klines(binance, symbol, timeframe)
+        img_bytes = await asyncio.to_thread(
+            generate_chart, df, symbol, timeframe, levels,
+        )
+        await update.message.reply_photo(
+            photo=InputFile(
+                io.BytesIO(img_bytes),
+                filename=f"{symbol}_{timeframe}.png",
+            ),
+        )
+    except Exception:
+        pass  # Chart failure is non-fatal
+
+
 async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     text = update.message.text
     if not text:
@@ -125,36 +160,36 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None
     if forwarded or _is_macro_data(text):
         await db.record_user_call(chat_id)
 
-        # Split: if there's a previous forwarded message in context + user question
+        # Determine if this is forwarded data or a follow-up question
         user_question = ""
         forwarded_data = text
-
-        # If this message is NOT forwarded but context has forwarded data,
-        # this is likely a follow-up question about the forwarded data
         if not forwarded and context:
             user_question = text
             forwarded_data = context
 
-        # Fetch current BTC price for context
-        btc_price = ""
-        try:
-            binance = deps["binance"]
-            ticker = await binance.get_ticker_24hr("BTCUSDT")
-            if ticker:
-                price = float(ticker.get("lastPrice", 0))
-                change = float(ticker.get("priceChangePercent", 0))
-                btc_price = f"${price:,.0f} ({change:+.2f}% 24h)"
-        except Exception:
-            pass
-
+        # Fetch BTC price + run macro impact analysis
+        btc_price = await _fetch_btc_price(deps)
         analyst = deps["market_analyst"]
         result = await analyst.macro_impact(
             forwarded_data=forwarded_data,
             user_question=user_question,
             btc_price=btc_price,
         )
-        chat_context[chat_id] = text  # Store forwarded data for follow-ups
-        await send_long(update, result)
+
+        # Store forwarded data for follow-up questions
+        chat_context[chat_id] = text
+
+        # Send the text analysis first
+        await send_long(update, result.analysis_text)
+
+        # Conditional chart: only if Claude determined it's needed
+        if result.requires_chart:
+            await update.message.chat.send_action(ChatAction.UPLOAD_PHOTO)
+            await _generate_and_send_chart(
+                update, deps,
+                symbol=result.chart_asset,
+                timeframe=result.chart_timeframe,
+            )
         return
 
     # ── Route 2: News/headlines ──────────────────────────────
@@ -192,7 +227,10 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None
                         if title:
                             parts.append(f"- {title}: {summary}" if summary else f"- {title}")
                     if parts:
-                        narratives_text = "\n\nTrending Crypto Narratives (Elfa AI):\n" + "\n".join(parts)
+                        narratives_text = (
+                            "\n\nTrending Crypto Narratives (Elfa AI):\n"
+                            + "\n".join(parts)
+                        )
             except Exception:
                 pass
 
@@ -200,7 +238,9 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None
             analyst = deps["market_analyst"]
             news_for_summary = news if has_news else []
             extra_context = narratives_text if narratives_text else ""
-            summary = await analyst.news_summary(news_for_summary, extra_context=extra_context)
+            summary = await analyst.news_summary(
+                news_for_summary, extra_context=extra_context,
+            )
 
             links = ""
             if has_news:
@@ -277,21 +317,7 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None
             source="freeform",
         )
 
-        try:
-            binance = deps["binance"]
-            df = await fetch_klines(binance, symbol, timeframe)
-            img_bytes = await asyncio.to_thread(
-                generate_chart, df, symbol, timeframe, levels,
-            )
-            await update.message.reply_photo(
-                photo=InputFile(
-                    io.BytesIO(img_bytes),
-                    filename=f"{symbol}_{timeframe}.png",
-                ),
-            )
-        except Exception:
-            pass
-
+        await _generate_and_send_chart(update, deps, symbol, timeframe, levels)
         await send_long(update, analysis_text)
     else:
         # ── Route 5: General Q&A — no chart ──

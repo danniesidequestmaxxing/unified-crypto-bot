@@ -4,6 +4,9 @@ All functions use the deep (Opus) model for thorough analysis.
 """
 from __future__ import annotations
 
+import json
+import re
+from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from src.ai.prompts import (
@@ -14,6 +17,17 @@ from src.ai.prompts import (
     WEEKLY_REPORT_PROMPT,
 )
 from src.clients.claude import ClaudeService
+
+
+@dataclass
+class MacroImpactResult:
+    """Structured result from macro impact analysis."""
+    analysis_text: str
+    bias: str = "NEUTRAL"           # BULLISH | BEARISH | NEUTRAL
+    impact: str = "LOW"             # LOW | MEDIUM | HIGH | EXTREME
+    requires_chart: bool = False
+    chart_asset: str = "BTCUSDT"
+    chart_timeframe: str = "1H"
 
 
 class MarketAnalyst:
@@ -85,18 +99,50 @@ class MarketAnalyst:
     async def macro_impact(
         self, forwarded_data: str, user_question: str = "",
         btc_price: str = "",
-    ) -> str:
-        """Analyze macro/intel data impact on BTC."""
+    ) -> MacroImpactResult:
+        """Analyze macro/intel data impact on BTC. Returns structured result."""
         context_parts = [f"Forwarded data:\n{forwarded_data}"]
         if btc_price:
             context_parts.append(f"Current BTC price: {btc_price}")
         if user_question:
             context_parts.append(f"User's question: {user_question}")
         prompt = MACRO_IMPACT_PROMPT.format(context="\n\n".join(context_parts))
-        return await self.claude.complete_deep(
+        raw = await self.claude.complete_deep(
             messages=[{"role": "user", "content": prompt}],
-            max_tokens=1200,
+            max_tokens=1500,
         )
+        return self._parse_macro_response(raw)
+
+    @staticmethod
+    def _parse_macro_response(raw: str) -> MacroImpactResult:
+        """Extract the JSON decision block from Claude's macro impact response."""
+        # Strip the JSON block from display text
+        display_text = re.sub(
+            r"\n*```json\s*\n\{[^}]*\"requires_chart\"[^}]*\}\s*\n```\n*",
+            "",
+            raw,
+        ).strip()
+
+        # Parse the JSON block
+        m = re.search(
+            r"```json\s*\n(\{[^}]*\"requires_chart\"[^}]*\})\s*\n```",
+            raw, re.DOTALL,
+        )
+        if not m:
+            return MacroImpactResult(analysis_text=display_text)
+
+        try:
+            data = json.loads(m.group(1))
+            return MacroImpactResult(
+                analysis_text=display_text,
+                bias=data.get("bias", "NEUTRAL").upper(),
+                impact=data.get("impact", "LOW").upper(),
+                requires_chart=bool(data.get("requires_chart", False)),
+                chart_asset=data.get("chart_asset", "BTCUSDT"),
+                chart_timeframe=data.get("chart_timeframe", "1H"),
+            )
+        except (json.JSONDecodeError, ValueError, TypeError):
+            return MacroImpactResult(analysis_text=display_text)
 
     async def fed_analysis(self, summary: str) -> str:
         """Analyze Fed rate predictions from Polymarket."""
