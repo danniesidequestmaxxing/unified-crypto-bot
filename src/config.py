@@ -58,4 +58,4 @@ class Settings(BaseSettings):
     ]
 
     # ── Per-user rate limiting ─────────────────────────
-    claude_calls_per_user_per_hour: int = 10
+    claude_calls_per_user_per_hour: int = 999_999  # effectively unlimited
