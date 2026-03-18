@@ -1,8 +1,11 @@
-"""Catch-all text handler — routes free-form messages to Claude as trading questions.
+"""Catch-all text handler — routes free-form messages intelligently.
 
-When the user mentions a specific ticker/asset, automatically generates a
-candlestick chart (with EMA, RSI, volume) alongside the AI analysis — mirroring
-the /analyze command experience.
+Routing priority:
+1. Forwarded messages / macro data → macro impact analysis (BTC focus)
+2. News keywords → CoinDesk + Elfa AI news summary
+3. Fed/FOMC keywords → Polymarket-enriched Q&A
+4. Explicit chart/trade request with ticker → structured trade analysis + chart
+5. Everything else → general Q&A (no chart)
 """
 from __future__ import annotations
 
@@ -20,21 +23,40 @@ from src.chart.market_sessions import get_current_sessions
 from src.clients.coindesk import fetch_crypto_news
 from src.core.message_utils import send_long, send_plain_chunks
 
-# Keywords that suggest the user wants a chart / technical analysis
-_ANALYSIS_KEYWORDS = re.compile(
-    r"\b(analy[sz]e|chart|look\s+at|check|setup|trade|signal|technical|ta\b|"
-    r"breakout|breakdown|price\s+action|entry|long|short|scalp|swing)\b",
+# ── Keyword patterns ─────────────────────────────────────────
+
+# User explicitly wants a chart / trade analysis
+_CHART_KEYWORDS = re.compile(
+    r"\b(analy[sz]e|chart|look\s+at|check\s+(?:the\s+)?chart|"
+    r"setup|trade\s+(?:setup|idea|signal)|technical|ta\b|"
+    r"give\s+me\s+(?:a\s+)?(?:chart|setup|signal|analysis))\b",
     re.IGNORECASE,
 )
 
-# Keywords that suggest Fed / FOMC / rate cut questions
+# Macro / economic data patterns (forwarded intel)
+_MACRO_KEYWORDS = re.compile(
+    r"\b(cpi|ppi|nfp|non.?farm|gdp|pce|jobless\s+claims|unemployment|"
+    r"retail\s+sales|ism\s+|pmi\b|producer\s+price|consumer\s+price|"
+    r"inflation\s+(?:data|print|rate|expectations?)|"
+    r"core\s+(?:cpi|ppi|pce)|"
+    r"m/?m\s*;?\s*est|y/?y\s*;?\s*est|vs\.?\s*est|"
+    r"rate\s+decision|basis\s+points?\s+(?:cut|hike)|"
+    r"tariff|sanctions?|etf\s+(?:in|out)flow|"
+    r"whale\s+alert|liquidat(?:ion|ed)|"
+    r"open\s+interest|funding\s+rate|"
+    r"cpi\s+swaps?|energy\s+price|"
+    r"hawkish|dovish)\b",
+    re.IGNORECASE,
+)
+
+# Fed / FOMC keywords
 _FED_KEYWORDS = re.compile(
     r"\b(fomc|fed\b|federal\s+reserve|rate\s+cut|rate\s+hike|rate\s+decision|"
     r"interest\s+rate|basis\s+point|bps\s+cut|powell|dot\s+plot|fed\s+fund)\b",
     re.IGNORECASE,
 )
 
-# Keywords that suggest the user wants crypto news / headlines
+# News keywords
 _NEWS_KEYWORDS = re.compile(
     r"\b(news|headlines?|latest\s+(?:crypto|market|bitcoin|btc)|"
     r"what(?:'s|\s+is)\s+happening|market\s+update|crypto\s+update|"
@@ -44,7 +66,7 @@ _NEWS_KEYWORDS = re.compile(
 
 
 def _extract_symbol(text: str) -> str | None:
-    """Extract a trading pair from free text (mirrors engine._extract_symbol)."""
+    """Extract a trading pair from free text."""
     from src.ai.engine import KNOWN_COINS, _TICKER_STOPWORDS
 
     m = re.search(r"\b([A-Z]{2,10}(?:[/-]?USDT?|BUSD))\b", text.upper())
@@ -64,9 +86,15 @@ def _extract_symbol(text: str) -> str | None:
     return f"{best_unknown}USDT" if best_unknown else None
 
 
-def _should_chart(text: str) -> bool:
-    """Determine if the message warrants a chart alongside the analysis."""
-    return bool(_ANALYSIS_KEYWORDS.search(text))
+def _is_forwarded(update: Update) -> bool:
+    """Check if the message is forwarded from another chat/channel."""
+    msg = update.message
+    return bool(msg.forward_date or msg.forward_origin)
+
+
+def _is_macro_data(text: str) -> bool:
+    """Detect if text contains macro/economic data or market intel."""
+    return bool(_MACRO_KEYWORDS.search(text))
 
 
 async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
@@ -91,17 +119,52 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None
 
     chat_context = ctx.bot_data.setdefault("_chat_context", {})
     context = chat_context.get(chat_id, "")
+    forwarded = _is_forwarded(update)
 
-    # ── News/headlines route ──────────────────────────────────
+    # ── Route 1: Forwarded messages or macro data → BTC impact analysis ──
+    if forwarded or _is_macro_data(text):
+        await db.record_user_call(chat_id)
+
+        # Split: if there's a previous forwarded message in context + user question
+        user_question = ""
+        forwarded_data = text
+
+        # If this message is NOT forwarded but context has forwarded data,
+        # this is likely a follow-up question about the forwarded data
+        if not forwarded and context:
+            user_question = text
+            forwarded_data = context
+
+        # Fetch current BTC price for context
+        btc_price = ""
+        try:
+            binance = deps["binance"]
+            ticker = await binance.get_ticker_24hr("BTCUSDT")
+            if ticker:
+                price = float(ticker.get("lastPrice", 0))
+                change = float(ticker.get("priceChangePercent", 0))
+                btc_price = f"${price:,.0f} ({change:+.2f}% 24h)"
+        except Exception:
+            pass
+
+        analyst = deps["market_analyst"]
+        result = await analyst.macro_impact(
+            forwarded_data=forwarded_data,
+            user_question=user_question,
+            btc_price=btc_price,
+        )
+        chat_context[chat_id] = text  # Store forwarded data for follow-ups
+        await send_long(update, result)
+        return
+
+    # ── Route 2: News/headlines ──────────────────────────────
     if _NEWS_KEYWORDS.search(text):
         await db.record_user_call(chat_id)
-        # Extract hours from message (e.g. "last 12 hours")
         hours = 6
         hr_match = re.search(r"(\d{1,2})\s*h(?:ou)?rs?", text, re.IGNORECASE)
         if hr_match:
             hours = min(int(hr_match.group(1)), 48)
 
-        # Fetch CoinDesk news + Elfa trending narratives in parallel
         elfa = deps.get("elfa")
         news_task = fetch_crypto_news(limit=12, hours=hours)
         narratives_task = (
@@ -111,14 +174,12 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None
             news_task, narratives_task, return_exceptions=True,
         )
 
-        # Build news items
         if isinstance(news, Exception) or not news:
             news = []
         has_news = news and not (
             len(news) == 1 and "error" in news[0].get("title", "").lower()
         )
 
-        # Build narratives context
         narratives_text = ""
         if not isinstance(narratives_raw, (Exception, type(None))):
             try:
@@ -137,7 +198,6 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None
 
         if has_news or narratives_text:
             analyst = deps["market_analyst"]
-            # Combine sources for Claude summary
             news_for_summary = news if has_news else []
             extra_context = narratives_text if narratives_text else ""
             summary = await analyst.news_summary(news_for_summary, extra_context=extra_context)
@@ -149,10 +209,7 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None
                     for n in news[:6] if n.get("url")
                 )
 
-            msg = (
-                f"📰 News Summary (Last {hours} Hours)\n\n"
-                f"{summary}\n"
-            )
+            msg = f"📰 News Summary (Last {hours} Hours)\n\n{summary}\n"
             if links:
                 msg += f"\n🔗 Top Links:\n{links}\n"
             msg += f"\n🕐 {datetime.now(timezone.utc).strftime('%H:%M')} UTC"
@@ -161,7 +218,6 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None
             await send_plain_chunks(update, msg)
             return
 
-        # No news found — fall through to general Q&A
         await update.message.reply_text(
             f"📭 No news articles found in the last {hours} hours."
         )
@@ -169,7 +225,7 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None
 
     await db.record_user_call(chat_id)
 
-    # Detect Fed/FOMC questions and inject Polymarket data
+    # ── Route 3: Fed/FOMC questions → enrich with Polymarket ──
     fed_context = ""
     if _FED_KEYWORDS.search(text):
         try:
@@ -188,23 +244,22 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None
                         "actual probabilities. Present the data clearly."
                     )
         except Exception:
-            pass  # Non-fatal; fall through to normal AI response
+            pass
 
+    # ── Route 4: Explicit chart/trade request with ticker → chart + analysis ──
     symbol = _extract_symbol(text)
-    use_chart = symbol and _should_chart(text)
+    wants_chart = bool(_CHART_KEYWORDS.search(text))
 
-    if use_chart:
-        # Route through suggest_trade for structured analysis + chart
+    if symbol and wants_chart:
         timeframe = "1H"
         tf_match = re.search(r"\b(\d{1,2}[HhMmDdWw])\b", text)
         if tf_match:
             timeframe = tf_match.group(1).upper()
 
-        extra = context  # pass conversation context as extra notes
+        extra = context
         analysis_text, levels = await engine.suggest_trade(symbol, timeframe, extra)
         chat_context[chat_id] = analysis_text
 
-        # Record signal for self-learning
         session_info = get_current_sessions()
         await db.record_signal(
             chat_id=chat_id,
@@ -222,7 +277,6 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None
             source="freeform",
         )
 
-        # Generate and send chart
         try:
             binance = deps["binance"]
             df = await fetch_klines(binance, symbol, timeframe)
@@ -236,11 +290,11 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None
                 ),
             )
         except Exception:
-            pass  # Chart failure is non-fatal
+            pass
 
         await send_long(update, analysis_text)
     else:
-        # General Q&A — no chart needed
+        # ── Route 5: General Q&A — no chart ──
         enriched = text + fed_context if fed_context else text
         result = await engine.analyze(enriched, context)
         chat_context[chat_id] = result
