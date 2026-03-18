@@ -25,6 +25,13 @@ _ANALYSIS_KEYWORDS = re.compile(
     re.IGNORECASE,
 )
 
+# Keywords that suggest Fed / FOMC / rate cut questions
+_FED_KEYWORDS = re.compile(
+    r"\b(fomc|fed\b|federal\s+reserve|rate\s+cut|rate\s+hike|rate\s+decision|"
+    r"interest\s+rate|basis\s+point|bps\s+cut|powell|dot\s+plot|fed\s+fund)\b",
+    re.IGNORECASE,
+)
+
 
 def _extract_symbol(text: str) -> str | None:
     """Extract a trading pair from free text (mirrors engine._extract_symbol)."""
@@ -69,6 +76,27 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None
     context = chat_context.get(chat_id, "")
 
     await db.record_user_call(chat_id)
+
+    # Detect Fed/FOMC questions and inject Polymarket data
+    fed_context = ""
+    if _FED_KEYWORDS.search(text):
+        try:
+            polymarket = deps.get("polymarket")
+            if polymarket:
+                fed_data = await polymarket.get_fed_data()
+                parts = []
+                for d in fed_data:
+                    if d["outcomes"]:
+                        parts.append(f"{d['label']}: {d['outcomes']}")
+                if parts:
+                    fed_context = (
+                        "\n\nReal-time Polymarket Fed rate prediction data:\n"
+                        + "\n".join(parts)
+                        + "\n\nUse this data to answer the user's question with "
+                        "actual probabilities. Present the data clearly."
+                    )
+        except Exception:
+            pass  # Non-fatal; fall through to normal AI response
 
     symbol = _extract_symbol(text)
     use_chart = symbol and _should_chart(text)
@@ -121,6 +149,7 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None
         await send_long(update, analysis_text)
     else:
         # General Q&A — no chart needed
-        result = await engine.analyze(text, context)
+        enriched = text + fed_context if fed_context else text
+        result = await engine.analyze(enriched, context)
         chat_context[chat_id] = result
         await send_long(update, result)
