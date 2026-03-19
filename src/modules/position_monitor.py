@@ -245,7 +245,8 @@ class PositionMonitor:
             return
 
         for plan in self._plans:
-            price = prices.get(plan.coin, 0)
+            hl_key = plan.hl_ticker or plan.coin
+            price = prices.get(plan.coin, 0) or prices.get(hl_key, 0)
             if price == 0:
                 continue
 
@@ -298,10 +299,15 @@ class PositionMonitor:
         # Strategy: exact coin match first, then match by entry price (for pre-market stocks)
         plan_to_live: Dict[str, dict] = {}
         for plan in self._plans:
-            # Try exact coin name match
-            live = next((p for p in live_positions if p["coin"] == plan.coin), None)
+            # Try hl_ticker match first (e.g. "CRCL-USDC")
+            live = None
+            if plan.hl_ticker:
+                live = next((p for p in live_positions if p["coin"] == plan.hl_ticker), None)
+            # Then exact coin name match
             if not live:
-                # Try matching by entry price (within 1%) — handles HL renaming pre-market tickers
+                live = next((p for p in live_positions if p["coin"] == plan.coin), None)
+            # Last resort: match by entry price within 1%
+            if not live:
                 live = next(
                     (p for p in live_positions
                      if abs(p["entry"] - plan.entry) / plan.entry < 0.01),
@@ -327,7 +333,9 @@ class PositionMonitor:
 
         for plan in self._plans:
             coin = plan.coin
-            price = prices.get(coin, 0)
+            # Use hl_ticker for allMids lookup if set (pre-market stocks use different names)
+            hl_key = plan.hl_ticker or coin
+            price = prices.get(coin, 0) or prices.get(hl_key, 0)
             if price == 0:
                 continue
 
@@ -336,8 +344,8 @@ class PositionMonitor:
             pnl = live["unrealized_pnl"] if live else plan.size * (plan.entry - price)
             total_unrealized += pnl
 
-            # Funding
-            funding = await asyncio.to_thread(hl_get_funding, coin)
+            # Funding (use hl_ticker for pre-market stocks)
+            funding = await asyncio.to_thread(hl_get_funding, hl_key)
             fr_str = f"{funding * 100:.4f}%" if funding is not None else "N/A"
             fr_emoji = "💰" if funding and funding > 0 else "💸" if funding and funding < 0 else "➖"
 
@@ -464,7 +472,11 @@ class PositionMonitor:
                     # Fallback: use HL candles directly
                     # Try multiple ticker formats (pre-market stocks may differ)
                     hl_candles = []
-                    for ticker in [plan.coin, f"@{plan.coin}", f"{plan.coin}-USD"]:
+                    tickers_to_try = [plan.coin]
+                    if plan.hl_ticker:
+                        tickers_to_try.insert(0, plan.hl_ticker)
+                    tickers_to_try.extend([f"@{plan.coin}", f"{plan.coin}-USD"])
+                    for ticker in tickers_to_try:
                         try:
                             hl_candles = await asyncio.to_thread(hl_get_candles, ticker, "1h", 72)
                             if hl_candles:

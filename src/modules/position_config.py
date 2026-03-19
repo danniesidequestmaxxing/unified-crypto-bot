@@ -29,6 +29,7 @@ class PositionPlan:
     invalidation: float
     levels: list[Level] = field(default_factory=list)
     notes: str = ""
+    hl_ticker: str = ""  # Hyperliquid internal ticker if different from coin
 
 
 # ─── Hyperliquid wallet (read-only, for position fetching) ─────
@@ -100,6 +101,7 @@ INITIAL_PLANS: list[PositionPlan] = [
         margin_mode="isolated",
         trend_bias="parabolic",
         invalidation=140.00,
+        hl_ticker="CRCL-USDC",
         notes=(
             "Highest risk — parabolic uptrend, 24% of target with deep plan. "
             "Add ONLY on confirmed breakdown below $128 (break + retest as resistance). "
