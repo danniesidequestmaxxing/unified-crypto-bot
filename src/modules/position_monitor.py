@@ -291,6 +291,27 @@ class PositionMonitor:
             except Exception:
                 pass
 
+        # Backfill prices from live position data for coins not in allMids
+        # (pre-market stocks like CRCL may use different tickers in allMids)
+        for lp in live_positions:
+            lp_coin = lp["coin"]
+            if lp_coin not in prices and lp["entry"] > 0 and lp["size"] != 0:
+                # Calculate mark price from unrealized PnL
+                # Short: pnl = size * (entry - mark) → mark = entry - pnl/size
+                # Long: pnl = size * (mark - entry) → mark = entry + pnl/size
+                mark = lp["entry"] - (lp["unrealized_pnl"] / abs(lp["size"]))
+                prices[lp_coin] = mark
+                log.info("price_backfilled_from_position", coin=lp_coin, mark=mark)
+
+            # Also map plan coin names to HL coin names if they differ
+            for plan in self._plans:
+                if plan.coin not in prices:
+                    # Try matching: plan.coin in lp_coin or lp_coin in plan.coin
+                    if (plan.coin.upper() in lp_coin.upper() or
+                            lp_coin.upper() in plan.coin.upper()):
+                        prices[plan.coin] = prices.get(lp_coin, 0)
+                        log.info("price_mapped", plan_coin=plan.coin, hl_coin=lp_coin)
+
         # Build text update
         now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
         lines = [f"📊 *Hourly Update* — {now}\n"]
