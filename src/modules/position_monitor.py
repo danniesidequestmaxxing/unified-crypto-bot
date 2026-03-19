@@ -162,13 +162,16 @@ def hl_get_all_mark_prices() -> Dict[str, float]:
     return result
 
 
-def hl_get_candles(coin: str, interval: str = "1h", hours: int = 168) -> List[dict]:
+def hl_get_candles(coin: str, interval: str = "1h", hours: int = 168, dex: str = "") -> List[dict]:
     now_ms = int(time.time() * 1000)
     start_ms = now_ms - (hours * 3600 * 1000)
-    data = _hl_post({
+    payload = {
         "type": "candleSnapshot",
         "req": {"coin": coin, "interval": interval, "startTime": start_ms, "endTime": now_ms},
-    })
+    }
+    if dex:
+        payload["req"]["dex"] = dex
+    data = _hl_post(payload)
     candles = []
     for c in data:
         candles.append({
@@ -647,19 +650,33 @@ class PositionMonitor:
 
                 if df is None or df.empty:
                     # Fallback: use HL candles directly
-                    # Try multiple ticker formats (pre-market stocks may differ)
+                    # Try multiple ticker formats AND both dexes
                     hl_candles = []
                     tickers_to_try = [plan.coin]
                     if plan.hl_ticker:
                         tickers_to_try.insert(0, plan.hl_ticker)
                     tickers_to_try.extend([f"@{plan.coin}", f"{plan.coin}-USD"])
-                    for ticker in tickers_to_try:
-                        try:
-                            hl_candles = await asyncio.to_thread(hl_get_candles, ticker, "1h", 72)
-                            if hl_candles:
-                                break
-                        except Exception:
-                            continue
+
+                    # Determine which dex this position is on
+                    live = plan_to_live.get(plan.coin)
+                    dexes_to_try = [""]
+                    if live and live.get("dex") == "xyz":
+                        dexes_to_try = ["xyz", ""]  # try xyz first
+                    else:
+                        dexes_to_try = ["", "xyz"]  # try standard first
+
+                    for dex in dexes_to_try:
+                        for ticker in tickers_to_try:
+                            try:
+                                hl_candles = await asyncio.to_thread(
+                                    hl_get_candles, ticker, "1h", 72, dex
+                                )
+                                if hl_candles:
+                                    break
+                            except Exception:
+                                continue
+                        if hl_candles:
+                            break
                     df = hl_candles_to_df(hl_candles) if hl_candles else None
 
                 if df is None or df.empty:
