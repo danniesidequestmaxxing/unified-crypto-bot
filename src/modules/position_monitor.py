@@ -85,6 +85,25 @@ def hl_get_funding(coin: str) -> float | None:
     return None
 
 
+def hl_get_all_mark_prices() -> Dict[str, float]:
+    """Get mark prices for ALL assets including xyz pre-market perps.
+    Returns dict mapping every variant of the name to the mark price."""
+    result: Dict[str, float] = {}
+    try:
+        data = _hl_post({"type": "metaAndAssetCtxs"})
+        universe = data[0].get("universe", [])
+        ctxs = data[1]
+        for i, asset in enumerate(universe):
+            if i < len(ctxs):
+                name = asset.get("name", "")
+                mark = float(ctxs[i].get("markPx", 0))
+                if name and mark > 0:
+                    result[name] = mark
+    except Exception:
+        pass
+    return result
+
+
 def hl_get_candles(coin: str, interval: str = "1h", hours: int = 168) -> List[dict]:
     now_ms = int(time.time() * 1000)
     start_ms = now_ms - (hours * 3600 * 1000)
@@ -244,6 +263,15 @@ class PositionMonitor:
             log.warning("hl_price_fetch_failed", error=str(e))
             return
 
+        # Merge xyz pre-market prices
+        try:
+            mark_prices = await asyncio.to_thread(hl_get_all_mark_prices)
+            for k, v in mark_prices.items():
+                if k not in prices:
+                    prices[k] = v
+        except Exception:
+            pass
+
         for plan in self._plans:
             hl_key = plan.hl_ticker or plan.coin
             price = prices.get(plan.coin, 0) or prices.get(hl_key, 0)
@@ -290,6 +318,16 @@ class PositionMonitor:
         except Exception as e:
             log.error("hl_price_fetch_failed", error=str(e))
             return
+
+        # Merge mark prices from metaAndAssetCtxs (covers xyz pre-market perps that allMids misses)
+        try:
+            mark_prices = await asyncio.to_thread(hl_get_all_mark_prices)
+            for k, v in mark_prices.items():
+                if k not in prices:
+                    prices[k] = v
+            log.info("mark_prices_merged", added=len(mark_prices) - len(prices) + len(mark_prices))
+        except Exception:
+            pass
 
         # Fetch live positions if wallet is set
         live_positions = []
@@ -348,6 +386,22 @@ class PositionMonitor:
                 prices[plan.coin] = prices[plan.hl_ticker]
                 log.info("price_aliased", coin=plan.coin, hl_ticker=plan.hl_ticker,
                          price=prices[plan.hl_ticker])
+
+        # Broader fuzzy search: find any price key containing the plan coin name
+        for plan in self._plans:
+            if plan.coin not in prices:
+                matches = [k for k in prices if plan.coin in k or k in plan.coin]
+                if matches:
+                    best = matches[0]
+                    prices[plan.coin] = prices[best]
+                    log.info("price_fuzzy_matched", coin=plan.coin, matched_key=best,
+                             price=prices[best])
+                else:
+                    log.warning("price_not_found", coin=plan.coin,
+                                hl_ticker=plan.hl_ticker,
+                                sample_keys=[k for k in sorted(prices.keys())
+                                             if any(c in k.upper() for c in ["CRC", "CIRCLE", "XYZ"])]
+                                             or list(sorted(prices.keys()))[-10:])
 
         # If still missing, try deriving from live position (only if pnl is nonzero)
         for plan in self._plans:
