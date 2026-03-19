@@ -652,7 +652,7 @@ class PositionMonitor:
     # ── Transaction monitoring (runs every 30s) ─────────────
 
     async def _check_transactions(self) -> None:
-        """Poll HL for new fills and funding payments, alert on new ones."""
+        """Poll HL for new fills and funding payments. Auto-records PnL on closes."""
         if not self.wallet:
             return
 
@@ -667,7 +667,6 @@ class PositionMonitor:
                 self._last_fill_time = max(self._last_fill_time, fill_time)
                 coin = fill["coin"]
                 side = fill["side"].upper()
-                # Map HL side codes to readable labels
                 side_label = {"A": "Buy", "B": "Sell"}.get(side, side)
                 px = fill["px"]
                 sz = fill["sz"]
@@ -675,29 +674,89 @@ class PositionMonitor:
                 closed_pnl = fill["closed_pnl"]
                 direction = fill.get("dir", "")
 
+                # Match fill coin to a plan (handles hl_ticker aliases)
+                matched_plan = None
+                for plan in self._plans:
+                    if (coin == plan.coin or coin == plan.hl_ticker
+                            or plan.coin in coin or coin in plan.coin):
+                        matched_plan = plan
+                        break
+                # Fallback: match by entry price proximity
+                if not matched_plan:
+                    for plan in self._plans:
+                        if abs(px - plan.entry) / max(plan.entry, 1) < 0.05:
+                            matched_plan = plan
+                            break
+
+                display_coin = matched_plan.coin if matched_plan else coin
+
                 # Determine emoji and label
-                if "Open" in direction:
-                    emoji = "📥"
-                    label = f"Opened {side_label}"
-                elif "Close" in direction:
+                if "Close" in direction:
                     emoji = "📤"
                     label = f"Closed {side_label}"
+                elif "Open" in direction:
+                    emoji = "📥"
+                    label = f"Opened {side_label}"
                 else:
                     emoji = "⚡"
                     label = side_label
 
+                # Auto-record realized PnL on close fills
                 pnl_line = ""
-                if closed_pnl != 0:
+                cumulative_line = ""
+                if "Close" in direction and matched_plan:
+                    # Use HL's closed_pnl if available, otherwise calculate
+                    if abs(closed_pnl) > 0.001:
+                        realized = closed_pnl
+                    else:
+                        # For shorts: pnl = size * (entry - exit)
+                        realized = sz * (matched_plan.entry - px)
+
+                    pnl_sign = "+" if realized > 0 else ""
+                    pnl_line = f"\nRealized PnL: `{pnl_sign}${realized:.2f}`"
+
+                    try:
+                        # Record to DB
+                        cumulative = await self.pos_db.record_realized_pnl(
+                            display_coin, "AUTO_CLOSE", realized,
+                        )
+
+                        # Record event
+                        plans = await self.pos_db.get_active_plans()
+                        db_plan = next((p for p in plans if p["coin"] == display_coin), None)
+                        if db_plan:
+                            await self.pos_db.record_event(
+                                plan_id=db_plan["id"], event_type="CLOSE",
+                                price=px, size=sz, pnl=realized,
+                                level_label=f"Auto-detected close",
+                            )
+
+                        cumulative_line = (
+                            f"\n💰 Cumulative realized: `${cumulative:,.2f}` / "
+                            f"${PNL_TARGET:,.0f}"
+                        )
+                        log.info("auto_recorded_close", coin=display_coin,
+                                 pnl=realized, cumulative=cumulative)
+
+                        # Remove from active coins
+                        self._active_coins.discard(display_coin)
+
+                    except Exception as e:
+                        log.warning("auto_record_failed", coin=display_coin, error=str(e))
+
+                elif closed_pnl != 0:
                     pnl_sign = "+" if closed_pnl > 0 else ""
                     pnl_line = f"\nRealized PnL: `{pnl_sign}${closed_pnl:.2f}`"
 
                 await self.delivery.send_text(
-                    f"{emoji} *HL Fill — {coin}*\n\n"
-                    f"{label}: {sz} {coin} @ `${px:.4f}`\n"
+                    f"{emoji} *HL Fill — {display_coin}*\n\n"
+                    f"{label}: {sz} {display_coin} @ `${px:.4f}`\n"
                     f"Fee: `${fee:.4f}`"
                     f"{pnl_line}"
+                    f"{cumulative_line}"
                 )
-                log.info("hl_fill_alert", coin=coin, side=side, px=px, sz=sz)
+                log.info("hl_fill_alert", coin=display_coin, side=side, px=px,
+                         sz=sz, direction=direction)
 
         except Exception as e:
             log.warning("fill_check_failed", error=str(e))
