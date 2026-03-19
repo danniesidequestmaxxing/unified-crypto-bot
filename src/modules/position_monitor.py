@@ -342,17 +342,21 @@ class PositionMonitor:
             log.info("position_matched_by_remainder", plan_coin=plan.coin,
                      hl_coin=pos["coin"], entry=pos["entry"])
 
-        # Backfill prices from matched live positions
+        # Backfill prices from allMids using hl_ticker aliases
+        for plan in self._plans:
+            if plan.coin not in prices and plan.hl_ticker and plan.hl_ticker in prices:
+                prices[plan.coin] = prices[plan.hl_ticker]
+                log.info("price_aliased", coin=plan.coin, hl_ticker=plan.hl_ticker,
+                         price=prices[plan.hl_ticker])
+
+        # If still missing, try deriving from live position (only if pnl is nonzero)
         for plan in self._plans:
             live = plan_to_live.get(plan.coin)
             if live and plan.coin not in prices:
-                hl_key = plan.hl_ticker or plan.coin
-                if hl_key not in prices:
-                    if live["size"] != 0:
-                        mark = live["entry"] - (live["unrealized_pnl"] / abs(live["size"]))
-                        prices[plan.coin] = mark
-                        log.info("price_from_live_position", coin=plan.coin,
-                                 hl_coin=live["coin"], mark=round(mark, 4))
+                if live["size"] != 0 and abs(live["unrealized_pnl"]) > 0.01:
+                    mark = live["entry"] - (live["unrealized_pnl"] / abs(live["size"]))
+                    prices[plan.coin] = mark
+                    log.info("price_from_live_pnl", coin=plan.coin, mark=round(mark, 4))
 
         # Build text update
         now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
@@ -371,7 +375,11 @@ class PositionMonitor:
 
             # Match live position using pre-built mapping
             live = plan_to_live.get(coin)
-            pnl = live["unrealized_pnl"] if live else plan.size * (plan.entry - price)
+            # Always compute PnL from price (live unrealized_pnl is 0 for xyz pre-market perps)
+            pnl = plan.size * (plan.entry - price)
+            # Use live unrealized_pnl only if it looks valid and differs significantly
+            if live and abs(live["unrealized_pnl"]) > 0.01:
+                pnl = live["unrealized_pnl"]
             total_unrealized += pnl
 
             # Funding (use hl_ticker for pre-market stocks)
@@ -519,8 +527,7 @@ class PositionMonitor:
                     log.warning("no_candle_data", coin=plan.coin)
                     # Send text-only update instead of chart
                     price = prices.get(plan.coin, 0)
-                    live = plan_to_live.get(plan.coin)
-                    pnl = live["unrealized_pnl"] if live else plan.size * (plan.entry - price) if price else 0
+                    pnl = plan.size * (plan.entry - price) if price else 0
                     await self.delivery.send_text(
                         f"📊 *{plan.coin}* {plan.leverage}x Short │ "
                         f"PnL: `{'+'if pnl>=0 else ''}${pnl:,.0f}`\n"
@@ -547,8 +554,7 @@ class PositionMonitor:
                 )
 
                 price = prices.get(plan.coin, 0)
-                live = plan_to_live.get(plan.coin)
-                pnl = live["unrealized_pnl"] if live else plan.size * (plan.entry - price) if price else 0
+                pnl = plan.size * (plan.entry - price) if price else 0
 
                 await self.delivery.send_photo(
                     img_bytes,
