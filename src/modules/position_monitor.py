@@ -103,6 +103,62 @@ def hl_get_candles(coin: str, interval: str = "1h", hours: int = 168) -> List[di
     return sorted(candles, key=lambda x: x["time"])
 
 
+def hl_candles_to_df(candles: List[dict]):
+    """Convert HL candles to a pandas DataFrame compatible with generate_chart."""
+    import pandas as pd
+    if not candles:
+        return None
+    df = pd.DataFrame(candles)
+    df["Date"] = pd.to_datetime(df["time"])
+    df.set_index("Date", inplace=True)
+    df.rename(columns={
+        "open": "Open", "high": "High", "low": "Low",
+        "close": "Close", "volume": "Volume",
+    }, inplace=True)
+    return df[["Open", "High", "Low", "Close", "Volume"]]
+
+
+def hl_get_user_fills(wallet: str, limit: int = 50) -> List[dict]:
+    """Fetch recent fills (trades) for a wallet."""
+    try:
+        data = _hl_post({"type": "userFills", "user": wallet})
+        fills = []
+        for f in data[-limit:]:
+            fills.append({
+                "coin": f.get("coin", ""),
+                "side": f.get("side", ""),
+                "px": float(f.get("px", 0)),
+                "sz": float(f.get("sz", 0)),
+                "time": f.get("time", 0),
+                "fee": float(f.get("fee", 0)),
+                "oid": f.get("oid", ""),
+                "closed_pnl": float(f.get("closedPnl", 0)),
+                "dir": f.get("dir", ""),
+                "hash": f.get("hash", ""),
+            })
+        return fills
+    except Exception:
+        return []
+
+
+def hl_get_user_funding(wallet: str, limit: int = 20) -> List[dict]:
+    """Fetch recent funding payments for a wallet."""
+    try:
+        data = _hl_post({"type": "userFunding", "user": wallet})
+        entries = []
+        for f in data[-limit:]:
+            entries.append({
+                "coin": f.get("coin", ""),
+                "usdc": float(f.get("usdc", 0)),
+                "szi": float(f.get("szi", 0)),
+                "funding_rate": float(f.get("fundingRate", 0)),
+                "time": f.get("time", 0),
+            })
+        return entries
+    except Exception:
+        return []
+
+
 # ── AI analysis prompt for position monitoring ─────────────────
 
 POSITION_ANALYSIS_PROMPT = """You are an expert quantitative crypto derivatives trader managing leveraged short positions.
@@ -143,6 +199,8 @@ class PositionMonitor:
         self.wallet = os.getenv(HL_WALLET_ADDRESS_ENV, "")
         self._last_alert: Dict[Tuple[str, float], float] = {}
         self._plans: List[PositionPlan] = []
+        self._last_fill_time: int = 0       # epoch ms of last seen fill
+        self._last_funding_time: int = 0    # epoch ms of last seen funding
 
     async def initialize(self) -> None:
         """Load plans into DB and memory."""
@@ -367,7 +425,22 @@ class PositionMonitor:
         for plan in self._plans:
             try:
                 symbol = f"{plan.coin}USDT"
-                df = await fetch_klines(self.binance, symbol, "1H")
+
+                # Try Binance first, fall back to Hyperliquid candles
+                df = None
+                try:
+                    df = await fetch_klines(self.binance, symbol, "1H")
+                except Exception:
+                    pass
+
+                if df is None or df.empty:
+                    # Fallback: use HL candles directly
+                    hl_candles = await asyncio.to_thread(hl_get_candles, plan.coin, "1h", 72)
+                    df = hl_candles_to_df(hl_candles)
+
+                if df is None or df.empty:
+                    log.warning("no_candle_data", coin=plan.coin)
+                    continue
 
                 # Build levels dict for chart annotations
                 chart_levels: dict = {"direction": "SHORT"}
@@ -403,11 +476,107 @@ class PositionMonitor:
 
         log.info("position_hourly_update_complete")
 
+    # ── Transaction monitoring (runs every 30s) ─────────────
+
+    async def _check_transactions(self) -> None:
+        """Poll HL for new fills and funding payments, alert on new ones."""
+        if not self.wallet:
+            return
+
+        # ── Check fills (trades) ─────────────────────────
+        try:
+            fills = await asyncio.to_thread(hl_get_user_fills, self.wallet, 20)
+            for fill in fills:
+                fill_time = fill["time"]
+                if fill_time <= self._last_fill_time:
+                    continue
+
+                self._last_fill_time = max(self._last_fill_time, fill_time)
+                coin = fill["coin"]
+                side = fill["side"].upper()
+                px = fill["px"]
+                sz = fill["sz"]
+                fee = fill["fee"]
+                closed_pnl = fill["closed_pnl"]
+                direction = fill.get("dir", "")
+
+                # Determine emoji and label
+                if "Open" in direction:
+                    emoji = "📥"
+                    label = f"Opened {side}"
+                elif "Close" in direction:
+                    emoji = "📤"
+                    label = f"Closed {side}"
+                else:
+                    emoji = "⚡"
+                    label = side
+
+                pnl_line = ""
+                if closed_pnl != 0:
+                    pnl_sign = "+" if closed_pnl > 0 else ""
+                    pnl_line = f"\nRealized PnL: `{pnl_sign}${closed_pnl:.2f}`"
+
+                await self.delivery.send_text(
+                    f"{emoji} *HL Fill — {coin}*\n\n"
+                    f"{label}: {sz} @ `${px:.4f}`\n"
+                    f"Fee: `${fee:.4f}`"
+                    f"{pnl_line}"
+                )
+                log.info("hl_fill_alert", coin=coin, side=side, px=px, sz=sz)
+
+        except Exception as e:
+            log.warning("fill_check_failed", error=str(e))
+
+        # ── Check funding payments ───────────────────────
+        try:
+            fundings = await asyncio.to_thread(hl_get_user_funding, self.wallet, 10)
+            for f in fundings:
+                f_time = f["time"]
+                if f_time <= self._last_funding_time:
+                    continue
+
+                self._last_funding_time = max(self._last_funding_time, f_time)
+                coin = f["coin"]
+                usdc = f["usdc"]
+                rate = f["funding_rate"]
+
+                if abs(usdc) < 0.01:
+                    continue  # Skip dust
+
+                emoji = "💰" if usdc > 0 else "💸"
+                sign = "+" if usdc > 0 else ""
+                direction = "received" if usdc > 0 else "paid"
+
+                await self.delivery.send_text(
+                    f"{emoji} *Funding {direction} — {coin}*\n\n"
+                    f"Amount: `{sign}${usdc:.4f}` USDC\n"
+                    f"Rate: `{rate * 100:.4f}%`"
+                )
+                log.info("hl_funding_alert", coin=coin, usdc=usdc, rate=rate)
+
+        except Exception as e:
+            log.warning("funding_check_failed", error=str(e))
+
     # ── Main loops ─────────────────────────────────────────
 
     async def run_forever(self) -> None:
-        """Main entry — runs both alert and hourly loops concurrently."""
+        """Main entry — runs alert, hourly, and transaction loops concurrently."""
         await self.initialize()
+
+        # Seed last fill/funding times so we don't alert on historical data
+        if self.wallet:
+            try:
+                fills = await asyncio.to_thread(hl_get_user_fills, self.wallet, 5)
+                if fills:
+                    self._last_fill_time = max(f["time"] for f in fills)
+                fundings = await asyncio.to_thread(hl_get_user_funding, self.wallet, 5)
+                if fundings:
+                    self._last_funding_time = max(f["time"] for f in fundings)
+                log.info("transaction_tracking_seeded",
+                         last_fill=self._last_fill_time,
+                         last_funding=self._last_funding_time)
+            except Exception as e:
+                log.warning("transaction_seed_failed", error=str(e))
 
         # Startup message
         await self.delivery.send_text(
@@ -416,6 +585,7 @@ class PositionMonitor:
             + "\n".join(f"• {p.coin} {p.leverage}x" for p in self._plans)
             + f"\n\n⏱ Hourly updates with AI analysis + charts\n"
             f"🔔 Price alerts within {PROXIMITY_PCT}% of key levels\n"
+            f"📥 Real-time fill & funding alerts\n"
             f"🎯 Target: ${PNL_TARGET:,.0f}\n\n"
             f"Commands: /positions /posplan /pospnl"
         )
@@ -426,10 +596,11 @@ class PositionMonitor:
         except Exception as e:
             log.error("initial_update_failed", error=str(e))
 
-        # Run both loops
+        # Run all three loops
         await asyncio.gather(
             self._alert_loop(),
             self._hourly_loop(),
+            self._transaction_loop(),
         )
 
     async def _alert_loop(self) -> None:
@@ -438,6 +609,15 @@ class PositionMonitor:
                 await self._check_alerts()
             except Exception as e:
                 log.error("alert_loop_error", error=str(e))
+            await asyncio.sleep(PRICE_CHECK_INTERVAL)
+
+    async def _transaction_loop(self) -> None:
+        """Poll for new fills and funding every 30 seconds."""
+        while True:
+            try:
+                await self._check_transactions()
+            except Exception as e:
+                log.error("transaction_loop_error", error=str(e))
             await asyncio.sleep(PRICE_CHECK_INTERVAL)
 
     async def _hourly_loop(self) -> None:
