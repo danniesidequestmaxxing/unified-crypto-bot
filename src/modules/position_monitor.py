@@ -54,25 +54,55 @@ def hl_get_all_mids() -> Dict[str, float]:
 
 
 def hl_get_user_positions(wallet: str) -> List[dict]:
-    state = _hl_post({"type": "clearinghouseState", "user": wallet})
+    """Fetch positions from ALL dexes (standard + xyz pre-market)."""
     positions = []
-    for ap in state.get("assetPositions", []):
-        pos = ap.get("position", {})
-        size = float(pos.get("szi", 0))
-        if size == 0:
-            continue
-        positions.append({
-            "coin": pos.get("coin", ""),
-            "size": size,
-            "entry": float(pos.get("entryPx", 0)),
-            "unrealized_pnl": float(pos.get("unrealizedPnl", 0)),
-            "leverage": pos.get("leverage", {}),
-            "liquidation_price": float(pos.get("liquidationPx", 0) or 0),
-        })
+
+    # Standard perps (dex="")
+    try:
+        state = _hl_post({"type": "clearinghouseState", "user": wallet})
+        for ap in state.get("assetPositions", []):
+            pos = ap.get("position", {})
+            size = float(pos.get("szi", 0))
+            if size == 0:
+                continue
+            positions.append({
+                "coin": pos.get("coin", ""),
+                "size": size,
+                "entry": float(pos.get("entryPx", 0)),
+                "unrealized_pnl": float(pos.get("unrealizedPnl", 0)),
+                "leverage": pos.get("leverage", {}),
+                "liquidation_price": float(pos.get("liquidationPx", 0) or 0),
+                "dex": "",
+            })
+    except Exception:
+        pass
+
+    # xyz pre-market perps (dex="xyz")
+    try:
+        xyz_state = _hl_post({"type": "clearinghouseState", "user": wallet, "dex": "xyz"})
+        for ap in xyz_state.get("assetPositions", []):
+            pos = ap.get("position", {})
+            size = float(pos.get("szi", 0))
+            if size == 0:
+                continue
+            coin_name = pos.get("coin", "")
+            positions.append({
+                "coin": coin_name,
+                "size": size,
+                "entry": float(pos.get("entryPx", 0)),
+                "unrealized_pnl": float(pos.get("unrealizedPnl", 0)),
+                "leverage": pos.get("leverage", {}),
+                "liquidation_price": float(pos.get("liquidationPx", 0) or 0),
+                "dex": "xyz",
+            })
+    except Exception:
+        pass
+
     return positions
 
 
 def hl_get_funding(coin: str) -> float | None:
+    # Try standard dex first
     try:
         data = _hl_post({"type": "metaAndAssetCtxs"})
         universe = data[0].get("universe", [])
@@ -82,6 +112,19 @@ def hl_get_funding(coin: str) -> float | None:
                 return float(ctxs[i].get("funding", 0))
     except Exception:
         pass
+
+    # Try xyz dex (pre-market stocks)
+    try:
+        data = _hl_post({"type": "metaAndAssetCtxs", "dex": "xyz"})
+        universe = data[0].get("universe", [])
+        ctxs = data[1]
+        for i, asset in enumerate(universe):
+            name = asset.get("name", "")
+            if (name == coin or coin in name or name in coin) and i < len(ctxs):
+                return float(ctxs[i].get("funding", 0))
+    except Exception:
+        pass
+
     return None
 
 
@@ -101,6 +144,21 @@ def hl_get_all_mark_prices() -> Dict[str, float]:
                     result[name] = mark
     except Exception:
         pass
+
+    # Also fetch xyz dex mark prices (pre-market stocks)
+    try:
+        xyz_data = _hl_post({"type": "metaAndAssetCtxs", "dex": "xyz"})
+        xyz_universe = xyz_data[0].get("universe", [])
+        xyz_ctxs = xyz_data[1]
+        for i, asset in enumerate(xyz_universe):
+            if i < len(xyz_ctxs):
+                name = asset.get("name", "")
+                mark = float(xyz_ctxs[i].get("markPx", 0))
+                if name and mark > 0:
+                    result[name] = mark
+    except Exception:
+        pass
+
     return result
 
 
@@ -816,68 +874,20 @@ class PositionMonitor:
             f"Commands: /positions /posplan /pospnl"
         )
 
-        # ── DIAGNOSTIC: dump RAW HL clearinghouseState to find CRCL ──
+        # ── DIAGNOSTIC: show xyz dex data to confirm CRCL fix ──
         try:
-            import json as _json
-            raw_state = await asyncio.to_thread(
-                _hl_post, {"type": "clearinghouseState", "user": self.wallet}
+            positions = await asyncio.to_thread(hl_get_user_positions, self.wallet)
+            mark_prices = await asyncio.to_thread(hl_get_all_mark_prices)
+
+            pos_lines = [f"  `{p['coin']}` (dex={p.get('dex','')}) entry=${p['entry']:.2f} pnl=${p['unrealized_pnl']:.2f}"
+                         for p in positions]
+            crc_prices = {k: v for k, v in mark_prices.items() if "CRC" in k.upper()}
+
+            await self.delivery.send_text(
+                f"🔍 *Diagnostic (xyz dex support)*\n\n"
+                f"*All positions:*\n" + "\n".join(pos_lines or ["  none"]) + "\n\n"
+                f"*CRC mark prices:* `{crc_prices or 'NONE'}`"
             )
-
-            # Show all top-level keys
-            top_keys = list(raw_state.keys()) if isinstance(raw_state, dict) else str(type(raw_state))
-            diag_lines = [
-                "🔍 *RAW HL Diagnostic*\n",
-                f"*Top keys:* `{top_keys}`\n",
-            ]
-
-            # Show all position coin names from assetPositions
-            ap = raw_state.get("assetPositions", [])
-            ap_coins = []
-            for item in ap:
-                pos = item.get("position", {}) if isinstance(item, dict) else {}
-                ap_coins.append(pos.get("coin", "?"))
-            diag_lines.append(f"*assetPositions coins:* `{ap_coins}`\n")
-
-            # Dump any OTHER key that might contain positions
-            for key in raw_state:
-                if key == "assetPositions":
-                    continue
-                val = raw_state[key]
-                preview = str(val)[:300] if not isinstance(val, (int, float, bool)) else str(val)
-                diag_lines.append(f"*{key}:* `{preview}`\n")
-
-            # Also try the spot clearinghouse state
-            try:
-                spot_state = await asyncio.to_thread(
-                    _hl_post, {"type": "spotClearinghouseState", "user": self.wallet}
-                )
-                spot_keys = list(spot_state.keys()) if isinstance(spot_state, dict) else str(type(spot_state))
-                diag_lines.append(f"\n*spotClearinghouseState keys:* `{spot_keys}`")
-                if isinstance(spot_state, dict):
-                    for key in spot_state:
-                        val = spot_state[key]
-                        preview = str(val)[:300]
-                        diag_lines.append(f"*spot.{key}:* `{preview}`")
-            except Exception:
-                diag_lines.append("*spotClearinghouseState:* failed")
-
-            # Also try perpsAtOpenInterest or similar
-            try:
-                meta = await asyncio.to_thread(
-                    _hl_post, {"type": "metaAndAssetCtxs"}
-                )
-                universe = meta[0].get("universe", [])
-                crcl_assets = [a for a in universe if "CRC" in str(a.get("name", "")).upper()]
-                diag_lines.append(f"\n*metaAndAssetCtxs CRC assets:* `{crcl_assets}`")
-
-                # Check if there's a separate universe for xyz
-                all_names = [a.get("name", "") for a in universe]
-                xyz_names = [n for n in all_names if "-" in n][:10]
-                diag_lines.append(f"*Hyphenated names (sample):* `{xyz_names}`")
-            except Exception:
-                pass
-
-            await self.delivery.send_text("\n".join(diag_lines))
         except Exception as e:
             await self.delivery.send_text(f"🔍 Diagnostic failed: `{e}`")
 
