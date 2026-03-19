@@ -38,7 +38,7 @@ from src.handlers.social import (
 from src.handlers.start_help import cmd_help, cmd_start
 from src.handlers.weekly import cmd_weekly
 from src.handlers.positions import (
-    cmd_positions, cmd_posplan, cmd_pospnl, cmd_posfill, cmd_posadd,
+    cmd_positions, cmd_posplan, cmd_pospnl, cmd_posfill, cmd_posadd, cmd_fills,
 )
 
 
@@ -77,6 +77,7 @@ def register_handlers(app: Application) -> None:
     app.add_handler(CommandHandler("pospnl", cmd_pospnl))
     app.add_handler(CommandHandler("posfill", cmd_posfill))
     app.add_handler(CommandHandler("posadd", cmd_posadd))
+    app.add_handler(CommandHandler("fills", cmd_fills))
 
     # Social intelligence (Elfa AI)
     app.add_handler(CommandHandler("trending", cmd_trending))

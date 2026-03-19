@@ -202,3 +202,54 @@ async def cmd_posadd(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
 
     except (ValueError, IndexError) as e:
         await update.message.reply_text(f"Invalid input: {e}")
+
+
+async def cmd_fills(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    """Show recent HL wallet fills. Usage: /fills [COIN] [limit]"""
+    monitor = ctx.bot_data.get("position_monitor")
+    if not monitor or not monitor.wallet:
+        await update.message.reply_text("Position monitor not initialized or no wallet set.")
+        return
+
+    await update.message.chat.send_action(ChatAction.TYPING)
+
+    parts = (update.message.text or "").split()
+    coin_filter = parts[1].upper() if len(parts) > 1 else None
+    limit = int(parts[2]) if len(parts) > 2 else 20
+
+    try:
+        from src.modules.position_monitor import hl_get_user_fills
+        import asyncio
+        from datetime import datetime, timezone
+
+        fills = await asyncio.to_thread(hl_get_user_fills, monitor.wallet, 50)
+
+        if coin_filter:
+            fills = [f for f in fills
+                     if coin_filter in f["coin"].upper() or f["coin"].upper() in coin_filter]
+
+        if not fills:
+            await update.message.reply_text(f"No fills found{' for ' + coin_filter if coin_filter else ''}.")
+            return
+
+        fills = sorted(fills, key=lambda x: x["time"], reverse=True)[:limit]
+
+        lines = [f"📋 *Recent Fills*{' — ' + coin_filter if coin_filter else ''}\n"]
+        for f in fills:
+            side = {"A": "Buy", "B": "Sell"}.get(f["side"].upper(), f["side"])
+            direction = f.get("dir", "")
+            closed_pnl = f["closed_pnl"]
+            pnl_str = f" | PnL: ${closed_pnl:+.2f}" if abs(closed_pnl) > 0.001 else ""
+            ts = datetime.fromtimestamp(f["time"] / 1000, tz=timezone.utc)
+            time_str = ts.strftime("%m/%d %H:%M")
+
+            lines.append(
+                f"{time_str} | {f['coin']}\n"
+                f"  {direction or side}: {f['sz']} @ ${f['px']:.4f}"
+                f"{pnl_str}\n"
+            )
+
+        await update.message.reply_text("\n".join(lines))
+
+    except Exception as e:
+        await update.message.reply_text(f"Error: {e}")
