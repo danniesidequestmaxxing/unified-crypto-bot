@@ -72,28 +72,6 @@ INITIAL_PLANS: list[PositionPlan] = [
         ],
     ),
     PositionPlan(
-        coin="HYPE",
-        direction="short",
-        entry=41.2569,
-        size=27.57,
-        leverage=10,
-        margin_mode="cross",
-        trend_bias="bullish",
-        invalidation=44.00,
-        notes=(
-            "Counter-trend short in uptrend — 6% of target. "
-            "Higher highs since Jan $21. Trade the pullback only. "
-            "Do NOT add above $41.50. Close everything if $44 breaks with conviction."
-        ),
-        levels=[
-            Level(price=34.00, action="TP", size=15.0,   label="Partial TP — weak high"),
-            Level(price=30.00, action="TP", size=15.0,   label="TP — flush to $30"),
-            Level(price=27.00, action="TP", size=7.57,   label="Final TP — March low area"),
-            Level(price=40.50, action="ADD", size=40.0,   label="Add short — dead cat bounce (only after TP1)", requires_tp1=True),
-            Level(price=40.75, action="SL", size=27.57,  label="Trailing stop 3% — active on HL"),
-        ],
-    ),
-    PositionPlan(
         coin="CRCL",
         direction="short",
         entry=132.60,
