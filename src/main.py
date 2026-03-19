@@ -31,6 +31,8 @@ from src.handlers.registry import register_handlers
 from src.handlers.signals import restore_autosignal_subs
 from src.modules.ghost import GhostScreener
 from src.modules.heatmap import HeatmapSniper
+from src.core.database_positions import PositionDatabase
+from src.modules.position_monitor import PositionMonitor
 from src.modules.scheduler import schedule_jobs
 from src.modules.social_filter import SocialFilter
 from src.webhook.server import create_webhook_app, init as init_webhook
@@ -58,6 +60,10 @@ async def main() -> None:
     except Exception as exc:
         log.error("database_connection_failed", path=settings.db_path, error=str(exc))
         sys.exit(1)
+
+    # ── Position tracking DB ──────────────────────────
+    pos_db = PositionDatabase(db._conn)
+    await pos_db.init_schema()
 
     # ── API Clients ─────────────────────────────────────
     claude = ClaudeService(
@@ -111,6 +117,16 @@ async def main() -> None:
         db=db,
     )
 
+    # ── Position Monitor ──────────────────────────────
+    position_monitor = PositionMonitor(
+        claude=claude,
+        binance=binance,
+        pos_db=pos_db,
+        delivery=telegram_delivery,
+    )
+    if settings.hl_wallet_address:
+        position_monitor.wallet = settings.hl_wallet_address
+
     # ── Background Modules ──────────────────────────────
     social_filter = SocialFilter(elfa, db, settings)
     heatmap = HeatmapSniper(cg_prime, cg_hobbyist, db, telegram_delivery, settings)
@@ -131,6 +147,8 @@ async def main() -> None:
         "coingecko": coingecko,
         "market_analyst": market_analyst,
         "trading_engine": trading_engine,
+        "position_monitor": position_monitor,
+        "pos_db": pos_db,
     })
 
     register_handlers(app)
@@ -150,7 +168,8 @@ async def main() -> None:
         # Start background modules
         background_tasks.append(asyncio.create_task(heatmap.run_forever()))
         background_tasks.append(asyncio.create_task(ghost.run_forever()))
-        log.info("background_modules_started")
+        background_tasks.append(asyncio.create_task(position_monitor.run_forever()))
+        log.info("background_modules_started", position_monitor="active")
 
         # Bug #1: Fixed — create_webhook_app() takes 0 args,
         # init_webhook() takes (secret, bot, bot_data)

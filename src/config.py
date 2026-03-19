@@ -34,6 +34,9 @@ class Settings(BaseSettings):
     # ── Binance ────────────────────────────────────────
     binance_base_url: str = "https://api.binance.com"
 
+    # ── Hyperliquid (read-only position tracking) ─────
+    hl_wallet_address: str = ""
+
     # ── Liquidation-bot tuning ─────────────────────────
     heatmap_poll_seconds: int = 180
     ghost_poll_seconds: int = 900

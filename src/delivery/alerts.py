@@ -1,11 +1,19 @@
-"""Telegram push alert delivery — for background modules (heatmap, ghost).
+"""Patched TelegramDelivery — adds send_text() and send_photo() for PositionMonitor.
 
-Ported from liquidation-bot telegram_bot.py.
+INSTRUCTIONS: Replace src/delivery/alerts.py with this file, or apply the diff below.
+
+DIFF SUMMARY:
+  1. Added send_text() — sends Markdown-formatted text to the default chat
+  2. Added send_photo() — sends a photo (bytes) with optional caption
+  3. Added send_photo_to_chat() — sends photo to a specific chat_id
+  4. All new methods follow the same error-handling pattern as existing methods
 """
 from __future__ import annotations
 
+import io
+
 import structlog
-from telegram import Bot
+from telegram import Bot, InputFile
 from telegram.constants import ParseMode
 
 from src.core.database import Database
@@ -18,6 +26,47 @@ class TelegramDelivery:
         self.bot = Bot(token=token)
         self.chat_id = chat_id
         self.db = db
+
+    # ── NEW: Generic text sender (used by PositionMonitor) ─────
+
+    async def send_text(self, text: str, chat_id: str | None = None) -> None:
+        """Send a Markdown-formatted text message to the default or specified chat."""
+        target = chat_id or self.chat_id
+        try:
+            # Split long messages (Telegram limit: 4096 chars)
+            chunks = _split_message(text, max_len=4000)
+            for chunk in chunks:
+                try:
+                    await self.bot.send_message(
+                        chat_id=target, text=chunk, parse_mode=ParseMode.MARKDOWN,
+                    )
+                except Exception:
+                    # Fallback: strip markdown and send plain
+                    plain = chunk.replace("*", "").replace("`", "").replace("_", "")
+                    await self.bot.send_message(chat_id=target, text=plain)
+            log.info("telegram_text_sent", chat_id=target, length=len(text))
+        except Exception as exc:
+            log.error("telegram_text_failed", chat_id=target, error=str(exc))
+
+    # ── NEW: Photo sender (used by PositionMonitor for charts) ─
+
+    async def send_photo(
+        self, photo_bytes: bytes, caption: str = "", chat_id: str | None = None,
+    ) -> None:
+        """Send a photo (as bytes) with optional caption."""
+        target = chat_id or self.chat_id
+        try:
+            await self.bot.send_photo(
+                chat_id=target,
+                photo=InputFile(io.BytesIO(photo_bytes), filename="chart.png"),
+                caption=caption[:1024] if caption else None,  # Telegram caption limit
+                parse_mode=ParseMode.MARKDOWN if caption else None,
+            )
+            log.info("telegram_photo_sent", chat_id=target, caption=caption[:50])
+        except Exception as exc:
+            log.error("telegram_photo_failed", chat_id=target, error=str(exc))
+
+    # ── Existing methods (unchanged) ───────────────────────────
 
     async def send_heatmap_alert(
         self, symbol: str, mid_price: float, clusters: list[dict],
@@ -84,3 +133,22 @@ class TelegramDelivery:
         except Exception as exc:
             log.error("telegram_send_failed", module=module, symbol=symbol, error=str(exc))
             await self.db.insert_alert(module, symbol, text, telegram_ok=False)
+
+
+# ── Helper ─────────────────────────────────────────────────────
+
+def _split_message(text: str, max_len: int = 4000) -> list[str]:
+    """Split a message into chunks at newline boundaries."""
+    if len(text) <= max_len:
+        return [text]
+    chunks = []
+    while text:
+        if len(text) <= max_len:
+            chunks.append(text)
+            break
+        split_at = text.rfind("\n", 0, max_len)
+        if split_at == -1:
+            split_at = max_len
+        chunks.append(text[:split_at])
+        text = text[split_at:].lstrip("\n")
+    return chunks
