@@ -303,28 +303,51 @@ class PositionMonitor:
                 pass
 
         # Build a mapping from plan coin → live position
-        # Strategy: exact coin match first, then match by entry price (for pre-market stocks)
+        # Strategy: exact coin match → hl_ticker match → entry price → unmatched remainder
         plan_to_live: Dict[str, dict] = {}
+        matched_positions: set = set()
+
         for plan in self._plans:
-            # Try hl_ticker match first (e.g. "CRCL-USDC")
             live = None
+            # Try hl_ticker match first (e.g. "CRCL-USDC")
             if plan.hl_ticker:
-                live = next((p for p in live_positions if p["coin"] == plan.hl_ticker), None)
+                live = next((p for p in live_positions
+                             if p["coin"] == plan.hl_ticker and id(p) not in matched_positions), None)
             # Then exact coin name match
             if not live:
-                live = next((p for p in live_positions if p["coin"] == plan.coin), None)
-            # Last resort: match by entry price within 1%
+                live = next((p for p in live_positions
+                             if p["coin"] == plan.coin and id(p) not in matched_positions), None)
+            # Try partial match (CRCL in CRCL-USDC or vice versa)
+            if not live:
+                live = next((p for p in live_positions
+                             if (plan.coin in p["coin"] or p["coin"] in plan.coin)
+                             and id(p) not in matched_positions), None)
+            # Match by entry price within 1%
             if not live:
                 live = next(
                     (p for p in live_positions
-                     if abs(p["entry"] - plan.entry) / plan.entry < 0.01),
+                     if abs(p["entry"] - plan.entry) / max(plan.entry, 0.01) < 0.01
+                     and id(p) not in matched_positions),
                     None,
                 )
             if live:
                 plan_to_live[plan.coin] = live
-                # Backfill price from live position if missing from allMids
-                if plan.coin not in prices:
-                    # mark = entry - (pnl / |size|) for shorts
+                matched_positions.add(id(live))
+
+        # Last resort: assign any remaining unmatched positions to unmatched plans
+        unmatched_plans = [p for p in self._plans if p.coin not in plan_to_live]
+        unmatched_positions = [p for p in live_positions if id(p) not in matched_positions]
+        for plan, pos in zip(unmatched_plans, unmatched_positions):
+            plan_to_live[plan.coin] = pos
+            log.info("position_matched_by_remainder", plan_coin=plan.coin,
+                     hl_coin=pos["coin"], entry=pos["entry"])
+
+        # Backfill prices from matched live positions
+        for plan in self._plans:
+            live = plan_to_live.get(plan.coin)
+            if live and plan.coin not in prices:
+                hl_key = plan.hl_ticker or plan.coin
+                if hl_key not in prices:
                     if live["size"] != 0:
                         mark = live["entry"] - (live["unrealized_pnl"] / abs(live["size"]))
                         prices[plan.coin] = mark
