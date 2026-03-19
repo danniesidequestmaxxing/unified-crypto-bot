@@ -816,6 +816,40 @@ class PositionMonitor:
             f"Commands: /positions /posplan /pospnl"
         )
 
+        # ── DIAGNOSTIC: dump all HL ticker info to find CRCL ──
+        try:
+            diag_lines = ["🔍 *HL Ticker Diagnostic*\n"]
+
+            # 1. allMids keys containing CRC
+            mids = await asyncio.to_thread(hl_get_all_mids)
+            crc_mids = {k: v for k, v in mids.items() if "CRC" in k.upper()}
+            diag_lines.append(f"*allMids matches:* `{crc_mids or 'NONE'}`\n")
+
+            # 2. metaAndAssetCtxs universe names containing CRC
+            mark_prices = await asyncio.to_thread(hl_get_all_mark_prices)
+            crc_marks = {k: v for k, v in mark_prices.items() if "CRC" in k.upper()}
+            diag_lines.append(f"*metaAndAssetCtxs matches:* `{crc_marks or 'NONE'}`\n")
+
+            # 3. Live wallet positions
+            if self.wallet:
+                positions = await asyncio.to_thread(hl_get_user_positions, self.wallet)
+                pos_summary = [
+                    f"{p['coin']}: entry=${p['entry']:.2f} pnl=${p['unrealized_pnl']:.2f}"
+                    for p in positions
+                ]
+                diag_lines.append(f"*Wallet positions:*\n" + "\n".join(f"  `{p}`" for p in pos_summary))
+
+                # 4. Show any position with entry near 132.60 (our CRCL entry)
+                crcl_match = [p for p in positions if abs(p["entry"] - 132.60) < 2]
+                if crcl_match:
+                    diag_lines.append(f"\n*CRCL candidate (entry ~132.60):*")
+                    for p in crcl_match:
+                        diag_lines.append(f"  coin=`{p['coin']}` entry=`{p['entry']}` pnl=`{p['unrealized_pnl']}`")
+
+            await self.delivery.send_text("\n".join(diag_lines))
+        except Exception as e:
+            log.warning("diagnostic_failed", error=str(e))
+
         # First update immediately
         try:
             await self._send_hourly_update()
