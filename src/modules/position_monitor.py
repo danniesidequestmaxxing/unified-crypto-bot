@@ -816,39 +816,70 @@ class PositionMonitor:
             f"Commands: /positions /posplan /pospnl"
         )
 
-        # ── DIAGNOSTIC: dump all HL ticker info to find CRCL ──
+        # ── DIAGNOSTIC: dump RAW HL clearinghouseState to find CRCL ──
         try:
-            diag_lines = ["🔍 *HL Ticker Diagnostic*\n"]
+            import json as _json
+            raw_state = await asyncio.to_thread(
+                _hl_post, {"type": "clearinghouseState", "user": self.wallet}
+            )
 
-            # 1. allMids keys containing CRC
-            mids = await asyncio.to_thread(hl_get_all_mids)
-            crc_mids = {k: v for k, v in mids.items() if "CRC" in k.upper()}
-            diag_lines.append(f"*allMids matches:* `{crc_mids or 'NONE'}`\n")
+            # Show all top-level keys
+            top_keys = list(raw_state.keys()) if isinstance(raw_state, dict) else str(type(raw_state))
+            diag_lines = [
+                "🔍 *RAW HL Diagnostic*\n",
+                f"*Top keys:* `{top_keys}`\n",
+            ]
 
-            # 2. metaAndAssetCtxs universe names containing CRC
-            mark_prices = await asyncio.to_thread(hl_get_all_mark_prices)
-            crc_marks = {k: v for k, v in mark_prices.items() if "CRC" in k.upper()}
-            diag_lines.append(f"*metaAndAssetCtxs matches:* `{crc_marks or 'NONE'}`\n")
+            # Show all position coin names from assetPositions
+            ap = raw_state.get("assetPositions", [])
+            ap_coins = []
+            for item in ap:
+                pos = item.get("position", {}) if isinstance(item, dict) else {}
+                ap_coins.append(pos.get("coin", "?"))
+            diag_lines.append(f"*assetPositions coins:* `{ap_coins}`\n")
 
-            # 3. Live wallet positions
-            if self.wallet:
-                positions = await asyncio.to_thread(hl_get_user_positions, self.wallet)
-                pos_summary = [
-                    f"{p['coin']}: entry=${p['entry']:.2f} pnl=${p['unrealized_pnl']:.2f}"
-                    for p in positions
-                ]
-                diag_lines.append(f"*Wallet positions:*\n" + "\n".join(f"  `{p}`" for p in pos_summary))
+            # Dump any OTHER key that might contain positions
+            for key in raw_state:
+                if key == "assetPositions":
+                    continue
+                val = raw_state[key]
+                preview = str(val)[:300] if not isinstance(val, (int, float, bool)) else str(val)
+                diag_lines.append(f"*{key}:* `{preview}`\n")
 
-                # 4. Show any position with entry near 132.60 (our CRCL entry)
-                crcl_match = [p for p in positions if abs(p["entry"] - 132.60) < 2]
-                if crcl_match:
-                    diag_lines.append(f"\n*CRCL candidate (entry ~132.60):*")
-                    for p in crcl_match:
-                        diag_lines.append(f"  coin=`{p['coin']}` entry=`{p['entry']}` pnl=`{p['unrealized_pnl']}`")
+            # Also try the spot clearinghouse state
+            try:
+                spot_state = await asyncio.to_thread(
+                    _hl_post, {"type": "spotClearinghouseState", "user": self.wallet}
+                )
+                spot_keys = list(spot_state.keys()) if isinstance(spot_state, dict) else str(type(spot_state))
+                diag_lines.append(f"\n*spotClearinghouseState keys:* `{spot_keys}`")
+                if isinstance(spot_state, dict):
+                    for key in spot_state:
+                        val = spot_state[key]
+                        preview = str(val)[:300]
+                        diag_lines.append(f"*spot.{key}:* `{preview}`")
+            except Exception:
+                diag_lines.append("*spotClearinghouseState:* failed")
+
+            # Also try perpsAtOpenInterest or similar
+            try:
+                meta = await asyncio.to_thread(
+                    _hl_post, {"type": "metaAndAssetCtxs"}
+                )
+                universe = meta[0].get("universe", [])
+                crcl_assets = [a for a in universe if "CRC" in str(a.get("name", "")).upper()]
+                diag_lines.append(f"\n*metaAndAssetCtxs CRC assets:* `{crcl_assets}`")
+
+                # Check if there's a separate universe for xyz
+                all_names = [a.get("name", "") for a in universe]
+                xyz_names = [n for n in all_names if "-" in n][:10]
+                diag_lines.append(f"*Hyphenated names (sample):* `{xyz_names}`")
+            except Exception:
+                pass
 
             await self.delivery.send_text("\n".join(diag_lines))
         except Exception as e:
-            log.warning("diagnostic_failed", error=str(e))
+            await self.delivery.send_text(f"🔍 Diagnostic failed: `{e}`")
 
         # First update immediately
         try:
