@@ -15,6 +15,7 @@ class Level:
     size: float | None = None
     label: str = ""
     triggered: bool = False
+    requires_tp1: bool = False  # Only alert/activate after TP1 has filled
 
 
 @dataclass
@@ -66,7 +67,7 @@ INITIAL_PLANS: list[PositionPlan] = [
             Level(price=75.00, action="TP", size=70.0,   label="TP — wick target"),
             Level(price=65.00, action="TP", size=50.0,   label="Final TP — Feb capitulation low"),
             Level(price=93.00, action="ADD", size=80.0,  label="Add short — bounce to resistance"),
-            Level(price=89.00, action="ADD", size=100.0, label="Add short — bounce after TP1 fill"),
+            Level(price=89.00, action="ADD", size=100.0, label="Add short — bounce after TP1 fill", requires_tp1=True),
             Level(price=91.61, action="SL", size=170.0,  label="Trailing stop 2% — active on HL"),
         ],
     ),
@@ -88,7 +89,7 @@ INITIAL_PLANS: list[PositionPlan] = [
             Level(price=34.00, action="TP", size=15.0,   label="Partial TP — weak high"),
             Level(price=30.00, action="TP", size=15.0,   label="TP — flush to $30"),
             Level(price=27.00, action="TP", size=7.57,   label="Final TP — March low area"),
-            Level(price=40.50, action="ADD", size=40.0,   label="Add short — dead cat bounce (only after TP1)"),
+            Level(price=40.50, action="ADD", size=40.0,   label="Add short — dead cat bounce (only after TP1)", requires_tp1=True),
             Level(price=40.75, action="SL", size=27.57,  label="Trailing stop 3% — active on HL"),
         ],
     ),

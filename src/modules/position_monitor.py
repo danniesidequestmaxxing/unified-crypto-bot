@@ -264,6 +264,13 @@ class PositionMonitor:
             for level in plan.levels:
                 if level.triggered:
                     continue
+                # Skip conditional ADDs until TP1 has filled
+                if level.requires_tp1:
+                    tp1_filled = any(
+                        l.action == "TP" and l.triggered for l in plan.levels
+                    )
+                    if not tp1_filled:
+                        continue
                 dist_pct = abs(price - level.price) / price * 100
                 if dist_pct < PROXIMITY_PCT and self._can_alert(plan.coin, level.price):
                     emoji = {"TP": "🟢", "ADD": "⚡", "SL": "🔴"}.get(level.action, "📍")
@@ -621,20 +628,12 @@ class PositionMonitor:
         """Main entry — runs alert, hourly, and transaction loops concurrently."""
         await self.initialize()
 
-        # Seed last fill/funding times so we don't alert on historical data
-        if self.wallet:
-            try:
-                fills = await asyncio.to_thread(hl_get_user_fills, self.wallet, 5)
-                if fills:
-                    self._last_fill_time = max(f["time"] for f in fills)
-                fundings = await asyncio.to_thread(hl_get_user_funding, self.wallet, 5)
-                if fundings:
-                    self._last_funding_time = max(f["time"] for f in fundings)
-                log.info("transaction_tracking_seeded",
-                         last_fill=self._last_fill_time,
-                         last_funding=self._last_funding_time)
-            except Exception as e:
-                log.warning("transaction_seed_failed", error=str(e))
+        # Seed last fill/funding times to current time
+        # This prevents alerting on historical fills on every redeploy
+        now_ms = int(time.time() * 1000)
+        self._last_fill_time = now_ms
+        self._last_funding_time = now_ms
+        log.info("transaction_tracking_seeded", baseline_ms=now_ms)
 
         # Startup message
         await self.delivery.send_text(
