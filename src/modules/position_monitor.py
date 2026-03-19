@@ -435,11 +435,28 @@ class PositionMonitor:
 
                 if df is None or df.empty:
                     # Fallback: use HL candles directly
-                    hl_candles = await asyncio.to_thread(hl_get_candles, plan.coin, "1h", 72)
-                    df = hl_candles_to_df(hl_candles)
+                    # Try multiple ticker formats (pre-market stocks may differ)
+                    hl_candles = []
+                    for ticker in [plan.coin, f"@{plan.coin}", f"{plan.coin}-USD"]:
+                        try:
+                            hl_candles = await asyncio.to_thread(hl_get_candles, ticker, "1h", 72)
+                            if hl_candles:
+                                break
+                        except Exception:
+                            continue
+                    df = hl_candles_to_df(hl_candles) if hl_candles else None
 
                 if df is None or df.empty:
                     log.warning("no_candle_data", coin=plan.coin)
+                    # Send text-only update instead of chart
+                    price = prices.get(plan.coin, 0)
+                    live = next((p for p in live_positions if p["coin"] == plan.coin), None)
+                    pnl = live["unrealized_pnl"] if live else plan.size * (plan.entry - price)
+                    await self.delivery.send_text(
+                        f"📊 *{plan.coin}* {plan.leverage}x Short │ "
+                        f"PnL: `{'+'if pnl>=0 else ''}${pnl:,.0f}`\n"
+                        f"_(Chart unavailable — candle data not supported for this asset)_"
+                    )
                     continue
 
                 # Build levels dict for chart annotations
@@ -494,6 +511,8 @@ class PositionMonitor:
                 self._last_fill_time = max(self._last_fill_time, fill_time)
                 coin = fill["coin"]
                 side = fill["side"].upper()
+                # Map HL side codes to readable labels
+                side_label = {"A": "Buy", "B": "Sell"}.get(side, side)
                 px = fill["px"]
                 sz = fill["sz"]
                 fee = fill["fee"]
@@ -503,13 +522,13 @@ class PositionMonitor:
                 # Determine emoji and label
                 if "Open" in direction:
                     emoji = "📥"
-                    label = f"Opened {side}"
+                    label = f"Opened {side_label}"
                 elif "Close" in direction:
                     emoji = "📤"
-                    label = f"Closed {side}"
+                    label = f"Closed {side_label}"
                 else:
                     emoji = "⚡"
-                    label = side
+                    label = side_label
 
                 pnl_line = ""
                 if closed_pnl != 0:
@@ -518,7 +537,7 @@ class PositionMonitor:
 
                 await self.delivery.send_text(
                     f"{emoji} *HL Fill — {coin}*\n\n"
-                    f"{label}: {sz} @ `${px:.4f}`\n"
+                    f"{label}: {sz} {coin} @ `${px:.4f}`\n"
                     f"Fee: `${fee:.4f}`"
                     f"{pnl_line}"
                 )
