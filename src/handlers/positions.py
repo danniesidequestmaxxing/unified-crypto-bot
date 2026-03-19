@@ -6,7 +6,7 @@ Commands:
   /pospnl      — PnL breakdown with progress toward $10k
   /posfill     — Record a TP fill (e.g. /posfill SOL 85.00 50)
   /posadd      — Record an ADD (e.g. /posadd SOL 93.00 80)
-  /posclose    — Close/deactivate a position plan
+  /posclose    — Close/deactivate a position plan (e.g. /posclose HYPE 39.06)
 """
 from __future__ import annotations
 
@@ -17,8 +17,18 @@ from telegram.ext import ContextTypes
 from src.modules.position_config import PNL_TARGET
 
 
+def _is_authorized(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> bool:
+    """Only allow the configured chat to use position commands."""
+    allowed = ctx.bot_data.get("settings", {})
+    if hasattr(allowed, "telegram_chat_id"):
+        return str(update.effective_chat.id) == str(allowed.telegram_chat_id)
+    return True
+
+
 async def cmd_positions(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     """Force an immediate portfolio update with charts."""
+    if not _is_authorized(update, ctx):
+        return
     monitor = ctx.bot_data.get("position_monitor")
     if not monitor:
         await update.message.reply_text("Position monitor not initialized.")
@@ -35,6 +45,8 @@ async def cmd_positions(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def cmd_posplan(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     """Show the current trading plan."""
+    if not _is_authorized(update, ctx):
+        return
     monitor = ctx.bot_data.get("position_monitor")
     if not monitor:
         await update.message.reply_text("Position monitor not initialized.")
@@ -68,6 +80,8 @@ async def cmd_posplan(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def cmd_pospnl(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     """Show PnL breakdown with progress."""
+    if not _is_authorized(update, ctx):
+        return
     monitor = ctx.bot_data.get("position_monitor")
     pos_db = ctx.bot_data.get("pos_db")
     if not monitor or not pos_db:
@@ -130,6 +144,8 @@ async def cmd_pospnl(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def cmd_posfill(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     """Record a TP fill. Usage: /posfill SOL 85.00 50"""
+    if not _is_authorized(update, ctx):
+        return
     monitor = ctx.bot_data.get("position_monitor")
     if not monitor:
         await update.message.reply_text("Position monitor not initialized.")
@@ -159,6 +175,8 @@ async def cmd_posfill(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def cmd_posadd(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     """Record an ADD. Usage: /posadd SOL 93.00 80"""
+    if not _is_authorized(update, ctx):
+        return
     monitor = ctx.bot_data.get("position_monitor")
     if not monitor:
         await update.message.reply_text("Position monitor not initialized.")

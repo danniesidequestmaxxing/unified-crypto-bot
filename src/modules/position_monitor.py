@@ -220,6 +220,7 @@ class PositionMonitor:
         self._plans: List[PositionPlan] = []
         self._last_fill_time: int = 0       # epoch ms of last seen fill
         self._last_funding_time: int = 0    # epoch ms of last seen funding
+        self._active_coins: set = set()     # coins with live HL positions (updated hourly)
 
     async def initialize(self) -> None:
         """Load plans into DB and memory."""
@@ -273,6 +274,9 @@ class PositionMonitor:
             pass
 
         for plan in self._plans:
+            # Skip positions no longer on HL
+            if self._active_coins and plan.coin not in self._active_coins:
+                continue
             hl_key = plan.hl_ticker or plan.coin
             price = prices.get(plan.coin, 0) or prices.get(hl_key, 0)
             if price == 0:
@@ -380,6 +384,11 @@ class PositionMonitor:
             log.info("position_matched_by_remainder", plan_coin=plan.coin,
                      hl_coin=pos["coin"], entry=pos["entry"])
 
+        # Update active coins set (used by alert loop to skip closed positions)
+        if live_positions:
+            self._active_coins = set(plan_to_live.keys())
+            log.info("active_coins_updated", coins=list(self._active_coins))
+
         # Backfill prices from allMids using hl_ticker aliases
         for plan in self._plans:
             if plan.coin not in prices and plan.hl_ticker and plan.hl_ticker in prices:
@@ -423,6 +432,18 @@ class PositionMonitor:
             coin = plan.coin
             # Use hl_ticker for allMids lookup if set (pre-market stocks use different names)
             hl_key = plan.hl_ticker or coin
+
+            # Skip positions that no longer exist on HL
+            if live_positions and coin not in plan_to_live:
+                # Position was closed on HL — notify once then skip
+                if not getattr(plan, '_notified_closed', False):
+                    await self.delivery.send_text(
+                        f"📤 *{coin}* position not found on HL wallet.\n"
+                        f"Skipping from updates. Use `/posfill` to record the close."
+                    )
+                    plan._notified_closed = True
+                continue
+
             price = prices.get(coin, 0) or prices.get(hl_key, 0)
             if price == 0:
                 continue
@@ -505,6 +526,9 @@ class PositionMonitor:
         try:
             ai_context_parts = []
             for plan in self._plans:
+                # Skip positions no longer on HL
+                if self._active_coins and plan.coin not in self._active_coins:
+                    continue
                 coin = plan.coin
                 learning = await self.pos_db.build_position_learning_context(coin)
                 market = market_data_blocks.get(coin, "")
@@ -550,6 +574,9 @@ class PositionMonitor:
 
         # ── Charts ─────────────────────────────────────────
         for plan in self._plans:
+            # Skip positions no longer on HL
+            if self._active_coins and plan.coin not in self._active_coins:
+                continue
             try:
                 symbol = f"{plan.coin}USDT"
 
