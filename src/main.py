@@ -168,8 +168,8 @@ async def main() -> None:
         # Start background modules
         background_tasks.append(asyncio.create_task(heatmap.run_forever()))
         background_tasks.append(asyncio.create_task(ghost.run_forever()))
-        background_tasks.append(asyncio.create_task(position_monitor.run_forever()))
-        log.info("background_modules_started", position_monitor="active")
+        # background_tasks.append(asyncio.create_task(position_monitor.run_forever()))
+        log.info("background_modules_started", position_monitor="disabled")
 
         # Bug #1: Fixed — create_webhook_app() takes 0 args,
         # init_webhook() takes (secret, bot, bot_data)
