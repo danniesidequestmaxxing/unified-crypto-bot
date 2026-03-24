@@ -25,6 +25,12 @@ from src.chart.market_sessions import get_current_sessions
 from src.clients.coindesk import fetch_crypto_news
 from src.core.message_utils import send_long, send_plain_chunks
 
+# Stocks that are crypto-related and benefit from crypto market context
+_CRYPTO_RELATED_STOCKS: set[str] = {
+    "COIN", "MSTR", "MARA", "RIOT", "CLSK", "HIVE", "BITF",
+    "GLXY", "GBTC", "HOOD", "CRCL", "SQ",
+}
+
 log = structlog.get_logger()
 
 # ── Keyword patterns ─────────────────────────────────────────
@@ -420,10 +426,11 @@ async def _route_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None
 
         if asset_type == "stock":
             # Stock: equity analysis (DCF, peers) + daily chart
-            intel_context = await _gather_intel(text, deps)
             enriched = text
-            if intel_context:
-                enriched += intel_context
+            if ticker in _CRYPTO_RELATED_STOCKS:
+                intel_context = await _gather_intel(text, deps)
+                if intel_context:
+                    enriched += intel_context
             result, _ = await engine.analyze(enriched, context, raw_question=text)
             chat_context[chat_id] = result
             await _generate_and_send_chart(update, deps, ticker, "1D", asset_type="stock")
@@ -456,12 +463,19 @@ async def _route_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None
             return
 
     # ── Route 5: General Q&A — enrich with live intel, then answer ──
-    intel_context = await _gather_intel(text, deps)
+    # Only inject crypto intel if the query isn't about a non-crypto stock
+    _is_non_crypto_stock = (
+        sym_result
+        and sym_result.asset_type == "stock"
+        and sym_result.symbol not in _CRYPTO_RELATED_STOCKS
+    )
     enriched = text
     if fed_context:
         enriched += fed_context
-    if intel_context:
-        enriched += intel_context
+    if not _is_non_crypto_stock:
+        intel_context = await _gather_intel(text, deps)
+        if intel_context:
+            enriched += intel_context
     result, detected_sym = await engine.analyze(enriched, context, raw_question=text)
     chat_context[chat_id] = result
     await send_long(update, result)

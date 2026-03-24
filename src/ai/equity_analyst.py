@@ -45,6 +45,7 @@ class EquityAnalyst:
         "TSLA": ["RIVN", "LCID", "GM", "F"],            # auto/EV
         "AAPL": ["MSFT", "GOOGL", "AMZN", "META"],     # mega-cap tech
         "NVDA": ["AMD", "INTC", "TSM", "AVGO"],        # semiconductors
+        "TSM": ["NVDA", "AMD", "INTC", "AVGO"],          # semiconductors
         "MSFT": ["AAPL", "GOOGL", "AMZN", "META"],     # mega-cap tech
         "GOOGL": ["META", "MSFT", "AMZN", "AAPL"],     # mega-cap tech
         "META": ["GOOGL", "SNAP", "PINS", "MSFT"],     # social/ad-tech

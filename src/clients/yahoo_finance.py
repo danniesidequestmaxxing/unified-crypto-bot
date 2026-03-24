@@ -54,6 +54,8 @@ COMPANY_TO_STOCK: dict[str, str] = {
     "BITFARMS": "BITF",
     "GALAXY": "GLXY",
     "GRAYSCALE": "GBTC",
+    "TSMC": "TSM",
+    "TAIWAN SEMICONDUCTOR": "TSM",
 }
 
 # Stock tickers that are NOT crypto tickers (avoids confusion)

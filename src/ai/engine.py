@@ -79,6 +79,8 @@ _COMPANY_TO_STOCK: dict[str, str] = {
     "RIOT": "RIOT",
     "CLEANSPARK": "CLSK",
     "RIPPLE": "XRPUSDT",  # crypto, not stock
+    "TSMC": "TSM",
+    "TAIWAN SEMICONDUCTOR": "TSM",
 }
 
 # Known stock tickers (not crypto)
