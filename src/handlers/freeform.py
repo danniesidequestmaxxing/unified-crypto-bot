@@ -14,6 +14,8 @@ import io
 import re
 from datetime import datetime, timezone
 
+import structlog
+
 from telegram import InputFile, Update
 from telegram.constants import ChatAction
 from telegram.ext import ContextTypes
@@ -22,6 +24,8 @@ from src.chart.generator import fetch_klines, generate_chart
 from src.chart.market_sessions import get_current_sessions
 from src.clients.coindesk import fetch_crypto_news
 from src.core.message_utils import send_long, send_plain_chunks
+
+log = structlog.get_logger()
 
 # ── Keyword patterns ─────────────────────────────────────────
 
@@ -137,6 +141,20 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None
     if not text:
         return
 
+    try:
+        await _route_message(update, ctx)
+    except Exception as exc:
+        log.error("freeform_handler_error", error=str(exc), exc_info=True)
+        try:
+            await update.message.reply_text(
+                f"Something went wrong processing your message. Error: {type(exc).__name__}"
+            )
+        except Exception:
+            pass
+
+
+async def _route_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+    text = update.message.text
     deps = ctx.bot_data
     engine = deps["trading_engine"]
     db = deps["db"]
