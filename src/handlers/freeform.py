@@ -454,3 +454,7 @@ async def _route_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None
         result = await engine.analyze(enriched, context)
         chat_context[chat_id] = result
         await send_long(update, result)
+
+        # Auto-generate chart if the question is about a tradeable asset
+        if symbol:
+            await _generate_and_send_chart(update, deps, symbol, "1H")

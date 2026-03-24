@@ -1,6 +1,8 @@
 """Unified async Claude (Anthropic) wrapper with dual-model support."""
 from __future__ import annotations
 
+import base64
+
 import anthropic
 import structlog
 
@@ -61,4 +63,33 @@ class ClaudeService:
         return await self.complete(
             messages, system=system, max_tokens=max_tokens,
             model=self.model_fast,
+        )
+
+    async def vision(
+        self,
+        image_bytes: bytes,
+        prompt: str,
+        media_type: str = "image/jpeg",
+        system: str = "",
+        max_tokens: int = 4096,
+    ) -> str:
+        """Analyze an image using Claude Vision. Uses the deep model."""
+        b64 = base64.standard_b64encode(image_bytes).decode("utf-8")
+        messages = [{
+            "role": "user",
+            "content": [
+                {
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": media_type,
+                        "data": b64,
+                    },
+                },
+                {"type": "text", "text": prompt},
+            ],
+        }]
+        return await self.complete(
+            messages, system=system, max_tokens=max_tokens,
+            model=self.model_deep,
         )

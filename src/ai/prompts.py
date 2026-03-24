@@ -105,6 +105,44 @@ Rules for requires_chart:
 
 {context}"""
 
+VISION_ANALYSIS_PROMPT = """You are a senior crypto/macro analyst. The user sent an image — it could be a chart screenshot, data table, economic release, social media post, or any market-related visual.
+
+Your job:
+1. IDENTIFY what the image shows (chart, data, screenshot, meme, news, etc.)
+2. EXTRACT key data points visible in the image
+3. ANALYZE the implications for crypto markets, especially BTC
+4. If it's a chart: identify the asset, timeframe, key levels, trend, and any patterns
+5. If it's data/news: assess the market impact (bullish/bearish/neutral)
+6. ACTIONABLE TAKE — what should a trader do with this information?
+
+{context}
+
+Keep it concise for Telegram. Use plain text with emojis only, no markdown headers or bold.
+
+CRITICAL — End with a JSON block:
+```json
+{{"bias": "BULLISH|BEARISH|NEUTRAL", "impact": "LOW|MEDIUM|HIGH|EXTREME", "requires_chart": true|false, "chart_asset": "BTCUSDT", "chart_timeframe": "1H"}}
+```
+Set requires_chart to true only if the image shows actionable price data that warrants a fresh chart."""
+
+DOCUMENT_ANALYSIS_PROMPT = """You are a senior crypto/macro analyst. The user uploaded a document containing the following extracted text. Analyze it as market intelligence.
+
+Your job:
+1. IDENTIFY what this document is (research report, economic data, regulatory filing, etc.)
+2. EXTRACT the key findings or data points
+3. ANALYZE the impact on crypto markets, especially BTC
+4. MAGNITUDE — rate impact: LOW (< 1% move), MEDIUM (1-3%), HIGH (3-5%), EXTREME (> 5%)
+5. ACTIONABLE TAKE — what should a trader do?
+
+{context}
+
+Keep it concise for Telegram. Use plain text with emojis only, no markdown headers or bold.
+
+CRITICAL — End with a JSON block:
+```json
+{{"bias": "BULLISH|BEARISH|NEUTRAL", "impact": "LOW|MEDIUM|HIGH|EXTREME", "requires_chart": true|false, "chart_asset": "BTCUSDT", "chart_timeframe": "1H"}}
+```"""
+
 FED_ANALYSIS_PROMPT = """You are a macro analyst. Based on these Polymarket prediction market probabilities for Fed rate decisions, give a concise analysis:
 
 {summary}

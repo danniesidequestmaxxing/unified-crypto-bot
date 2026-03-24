@@ -14,6 +14,7 @@ from src.handlers.alerts import cmd_alerts, cmd_stopalerts
 from src.handlers.analyze import cmd_analyze
 from src.handlers.fed import cmd_fed
 from src.handlers.freeform import handle_message
+from src.handlers.media import handle_document, handle_photo
 from src.handlers.headlines import cmd_headlines
 from src.handlers.market import cmd_market
 from src.handlers.performance import cmd_performance
@@ -95,6 +96,10 @@ def register_handlers(app: Application) -> None:
 
     # Inline keyboard callback (social commands timeframe selection)
     app.add_handler(CallbackQueryHandler(button_handler))
+
+    # Media handlers: photos and documents → Claude Vision / text extraction
+    app.add_handler(MessageHandler(filters.PHOTO & ~filters.COMMAND, handle_photo))
+    app.add_handler(MessageHandler(filters.Document.ALL & ~filters.COMMAND, handle_document))
 
     # Catch-all: free-form text → Claude trading Q&A (lowest priority)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
