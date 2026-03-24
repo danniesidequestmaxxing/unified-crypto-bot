@@ -38,17 +38,23 @@ KNOWN_COINS: set[str] = set(COIN_TO_GECKO_ID.keys())
 
 # Common English words that could be mistaken for tickers
 _TICKER_STOPWORDS = {
+    # Pronouns, articles, prepositions
     "THE", "AND", "FOR", "ARE", "BUT", "NOT", "YOU", "ALL", "CAN", "HER",
     "WAS", "ONE", "OUR", "OUT", "DAY", "GET", "HAS", "HIM", "HIS", "HOW",
     "ITS", "LET", "MAY", "NEW", "NOW", "OLD", "SEE", "WAY", "WHO", "DID",
     "GOT", "HIT", "RUN", "SET", "TOP", "USE", "WIN", "BIG", "LOW", "HIGH",
+    # Common verbs / question words
     "LOOK", "GIVE", "WHAT", "WHEN", "WITH", "THIS", "THAT", "FROM", "HAVE",
     "WILL", "YOUR", "BEEN", "CALL", "EACH", "MAKE", "LIKE", "LONG", "OVER",
     "SUCH", "TAKE", "THAN", "THEM", "VERY", "COME", "JUST", "KNOW", "TIME",
     "SOME", "GOOD", "INTO", "YEAR", "MOST", "ALSO", "BACK", "WANT", "ONLY",
+    "HAPPENED", "HAPPENING", "SHOULD", "COULD", "WOULD", "GOING", "BEING",
+    "BOUGHT", "SHORT", "PUTS", "GENERATE", "UPSIDE", "RECENT", "THEIR",
+    "BEEN", "SELL", "BUY", "DIP", "NEWS", "THINK", "TELL", "SHOW", "HELP",
+    "DOES", "MUCH", "ABOUT", "STILL", "DOWN", "KEEP", "WHICH", "WHERE",
+    # Trading / finance terms (not tickers)
     "FIRST", "PRICE", "CURRENT", "TRADE", "RECOMMEND", "STRATEGY", "TRADING",
     "ANALYSIS", "MARKET", "TODAY", "CHECK", "CHART", "STOCK", "CIRCLE",
-    "HAPPENING", "ABOUT", "THINK", "TELL", "SHOW", "HELP", "DOES", "MUCH",
 }
 
 # Map user-friendly timeframe strings to Binance interval codes
