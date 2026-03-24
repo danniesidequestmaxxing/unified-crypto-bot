@@ -36,6 +36,21 @@ COIN_TO_GECKO_ID: dict[str, str] = {
 
 KNOWN_COINS: set[str] = set(COIN_TO_GECKO_ID.keys())
 
+# Common English words that could be mistaken for tickers
+_TICKER_STOPWORDS = {
+    "THE", "AND", "FOR", "ARE", "BUT", "NOT", "YOU", "ALL", "CAN", "HER",
+    "WAS", "ONE", "OUR", "OUT", "DAY", "GET", "HAS", "HIM", "HIS", "HOW",
+    "ITS", "LET", "MAY", "NEW", "NOW", "OLD", "SEE", "WAY", "WHO", "DID",
+    "GOT", "HIT", "RUN", "SET", "TOP", "USE", "WIN", "BIG", "LOW", "HIGH",
+    "LOOK", "GIVE", "WHAT", "WHEN", "WITH", "THIS", "THAT", "FROM", "HAVE",
+    "WILL", "YOUR", "BEEN", "CALL", "EACH", "MAKE", "LIKE", "LONG", "OVER",
+    "SUCH", "TAKE", "THAN", "THEM", "VERY", "COME", "JUST", "KNOW", "TIME",
+    "SOME", "GOOD", "INTO", "YEAR", "MOST", "ALSO", "BACK", "WANT", "ONLY",
+    "FIRST", "PRICE", "CURRENT", "TRADE", "RECOMMEND", "STRATEGY", "TRADING",
+    "ANALYSIS", "MARKET", "TODAY", "CHECK", "CHART", "STOCK", "CIRCLE",
+    "HAPPENING", "ABOUT", "THINK", "TELL", "SHOW", "HELP", "DOES", "MUCH",
+}
+
 # Map user-friendly timeframe strings to Binance interval codes
 TIMEFRAME_MAP = {
     "1M": "1m", "3M": "3m", "5M": "5m",
@@ -469,27 +484,11 @@ def _extract_symbol(text: str) -> str | None:
             continue
         if clean in KNOWN_COINS:
             return f"{clean}USDT"
-        # Skip common English words that look like tickers
         if clean in _TICKER_STOPWORDS:
             continue
         if len(clean) >= 3 and best_unknown is None:
             best_unknown = clean
     return f"{best_unknown}USDT" if best_unknown else None
-
-
-# Common English words that could be mistaken for tickers
-_TICKER_STOPWORDS = {
-    "THE", "AND", "FOR", "ARE", "BUT", "NOT", "YOU", "ALL", "CAN", "HER",
-    "WAS", "ONE", "OUR", "OUT", "DAY", "GET", "HAS", "HIM", "HIS", "HOW",
-    "ITS", "LET", "MAY", "NEW", "NOW", "OLD", "SEE", "WAY", "WHO", "DID",
-    "GOT", "HIT", "RUN", "SET", "TOP", "USE", "WIN", "BIG", "LOW", "HIGH",
-    "LOOK", "GIVE", "WHAT", "WHEN", "WITH", "THIS", "THAT", "FROM", "HAVE",
-    "WILL", "YOUR", "BEEN", "CALL", "EACH", "MAKE", "LIKE", "LONG", "OVER",
-    "SUCH", "TAKE", "THAN", "THEM", "VERY", "COME", "JUST", "KNOW", "TIME",
-    "SOME", "GOOD", "INTO", "YEAR", "MOST", "ALSO", "BACK", "WANT", "ONLY",
-    "FIRST", "PRICE", "CURRENT", "TRADE", "RECOMMEND", "STRATEGY", "TRADING",
-    "ANALYSIS", "MARKET", "TODAY", "CHECK", "CHART",
-}
 
 
 def _parse_levels(text: str) -> dict | None:
