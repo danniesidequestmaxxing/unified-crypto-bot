@@ -72,25 +72,10 @@ _NEWS_KEYWORDS = re.compile(
 )
 
 
-def _extract_symbol(text: str) -> str | None:
-    """Extract a trading pair from free text."""
-    from src.ai.engine import KNOWN_COINS, _TICKER_STOPWORDS
-
-    m = re.search(r"\b([A-Z]{2,10}(?:[/-]?USDT?|BUSD))\b", text.upper())
-    if m:
-        return m.group(1).replace("/", "").replace("-", "")
-    best_unknown: str | None = None
-    for word in text.upper().split():
-        clean = re.sub(r"[^A-Z]", "", word)
-        if len(clean) < 2 or len(clean) > 10:
-            continue
-        if clean in KNOWN_COINS:
-            return f"{clean}USDT"
-        if clean in _TICKER_STOPWORDS:
-            continue
-        if len(clean) >= 3 and best_unknown is None:
-            best_unknown = clean
-    return f"{best_unknown}USDT" if best_unknown else None
+def _extract_symbol(text: str):
+    """Extract a trading symbol from free text. Returns SymbolResult or None."""
+    from src.ai.engine import _extract_symbol as engine_extract
+    return engine_extract(text)
 
 
 def _is_forwarded(update: Update) -> bool:
@@ -227,12 +212,18 @@ async def _gather_intel(text: str, deps: dict) -> str:
 
 async def _generate_and_send_chart(
     update: Update, deps: dict, symbol: str, timeframe: str,
-    levels: dict | None = None,
+    levels: dict | None = None, asset_type: str = "crypto",
 ) -> None:
     """Generate a candlestick chart and send it as a photo. Non-fatal on failure."""
     try:
-        binance = deps["binance"]
-        df = await fetch_klines(binance, symbol, timeframe)
+        if asset_type == "stock":
+            from src.clients.yahoo_finance import StockClient
+            from src.chart.generator import fetch_stock_klines
+            async with StockClient() as client:
+                df = await fetch_stock_klines(client, symbol, timeframe)
+        else:
+            binance = deps["binance"]
+            df = await fetch_klines(binance, symbol, timeframe)
         img_bytes = await asyncio.to_thread(
             generate_chart, df, symbol, timeframe, levels,
         )
@@ -242,8 +233,8 @@ async def _generate_and_send_chart(
                 filename=f"{symbol}_{timeframe}.png",
             ),
         )
-    except Exception:
-        pass  # Chart failure is non-fatal
+    except Exception as e:
+        log.warning("chart_generation_failed", symbol=symbol, asset_type=asset_type, error=str(e))
 
 
 async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
@@ -415,50 +406,64 @@ async def _route_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None
             pass
 
     # ── Route 4: Explicit chart/trade request with ticker → chart + analysis ──
-    symbol = _extract_symbol(text)
+    sym_result = _extract_symbol(text)
     wants_chart = bool(_CHART_KEYWORDS.search(text))
 
-    if symbol and wants_chart:
+    if sym_result and wants_chart:
         timeframe = "1H"
         tf_match = re.search(r"\b(\d{1,2}[HhMmDdWw])\b", text)
         if tf_match:
             timeframe = tf_match.group(1).upper()
 
-        extra = context
-        analysis_text, levels = await engine.suggest_trade(symbol, timeframe, extra)
-        chat_context[chat_id] = analysis_text
+        ticker = sym_result.symbol
+        asset_type = sym_result.asset_type
 
-        session_info = get_current_sessions()
-        await db.record_signal(
-            chat_id=chat_id,
-            asset=symbol,
-            timeframe=timeframe,
-            direction=levels.get("direction") if levels else None,
-            entry=levels.get("entry") if levels else None,
-            sl=levels.get("sl") if levels else None,
-            tp1=levels.get("tp1") if levels else None,
-            tp2=levels.get("tp2") if levels else None,
-            tp3=levels.get("tp3") if levels else None,
-            market_session=session_info["primary_session"],
-            session_detail=session_info,
-            analysis_text=analysis_text,
-            source="freeform",
+        if asset_type == "stock":
+            # For stocks, use general Q&A with stock data (no suggest_trade)
+            # Route to Route 5 logic below
+            pass
+        else:
+            extra = context
+            analysis_text, levels = await engine.suggest_trade(ticker, timeframe, extra)
+            chat_context[chat_id] = analysis_text
+
+            session_info = get_current_sessions()
+            await db.record_signal(
+                chat_id=chat_id,
+                asset=ticker,
+                timeframe=timeframe,
+                direction=levels.get("direction") if levels else None,
+                entry=levels.get("entry") if levels else None,
+                sl=levels.get("sl") if levels else None,
+                tp1=levels.get("tp1") if levels else None,
+                tp2=levels.get("tp2") if levels else None,
+                tp3=levels.get("tp3") if levels else None,
+                market_session=session_info["primary_session"],
+                session_detail=session_info,
+                analysis_text=analysis_text,
+                source="freeform",
+            )
+
+            await _generate_and_send_chart(update, deps, ticker, timeframe, levels, asset_type)
+            await send_long(update, analysis_text)
+            return
+
+    # ── Route 5: General Q&A — enrich with live intel, then answer ──
+    intel_context = await _gather_intel(text, deps)
+    enriched = text
+    if fed_context:
+        enriched += fed_context
+    if intel_context:
+        enriched += intel_context
+    result, detected_sym = await engine.analyze(enriched, context, raw_question=text)
+    chat_context[chat_id] = result
+    await send_long(update, result)
+
+    # Auto-generate chart if the question is about a tradeable asset
+    chart_sym = detected_sym or sym_result
+    if chart_sym:
+        tf = "1D" if chart_sym.asset_type == "stock" else "1H"
+        await _generate_and_send_chart(
+            update, deps, chart_sym.symbol, tf,
+            asset_type=chart_sym.asset_type,
         )
-
-        await _generate_and_send_chart(update, deps, symbol, timeframe, levels)
-        await send_long(update, analysis_text)
-    else:
-        # ── Route 5: General Q&A — enrich with live intel, then answer ──
-        intel_context = await _gather_intel(text, deps)
-        enriched = text
-        if fed_context:
-            enriched += fed_context
-        if intel_context:
-            enriched += intel_context
-        result = await engine.analyze(enriched, context, raw_question=text)
-        chat_context[chat_id] = result
-        await send_long(update, result)
-
-        # Auto-generate chart if the question is about a tradeable asset
-        if symbol:
-            await _generate_and_send_chart(update, deps, symbol, "1H")

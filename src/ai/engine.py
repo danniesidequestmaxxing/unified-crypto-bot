@@ -60,16 +60,42 @@ _TICKER_STOPWORDS = {
     "ANALYSIS", "MARKET", "TODAY", "CHECK", "CHART", "STOCK",
 }
 
-# Map company names / crypto project names to their Binance-tradable tickers
-_COMPANY_TO_TICKER: dict[str, str] = {
-    "CIRCLE": "USDCUSDT",
-    "COINBASE": "BTCUSDT",  # proxy — no COIN token on Binance
-    "MICROSTRATEGY": "BTCUSDT",  # BTC proxy
-    "STRATEGY": "BTCUSDT",  # new name for MicroStrategy
-    "TESLA": "DOGEUSDT",  # meme proxy
-    "RIPPLE": "XRPUSDT",
-    "TETHER": "BTCUSDT",  # stablecoin issuer
+# Map company names to stock tickers (for stock market charting)
+_COMPANY_TO_STOCK: dict[str, str] = {
+    "CIRCLE": "CRCL",
+    "COINBASE": "COIN",
+    "MICROSTRATEGY": "MSTR",
+    "STRATEGY": "MSTR",
+    "TESLA": "TSLA",
+    "APPLE": "AAPL",
+    "NVIDIA": "NVDA",
+    "MICROSOFT": "MSFT",
+    "GOOGLE": "GOOGL",
+    "ALPHABET": "GOOGL",
+    "AMAZON": "AMZN",
+    "META": "META",
+    "ROBINHOOD": "HOOD",
+    "MARATHON": "MARA",
+    "RIOT": "RIOT",
+    "CLEANSPARK": "CLSK",
+    "RIPPLE": "XRPUSDT",  # crypto, not stock
 }
+
+# Known stock tickers (not crypto)
+_KNOWN_STOCKS: set[str] = {
+    "CRCL", "COIN", "MSTR", "TSLA", "AAPL", "NVDA", "MSFT", "GOOGL",
+    "AMZN", "META", "HOOD", "MARA", "RIOT", "CLSK", "HIVE", "BITF",
+    "GLXY", "GBTC", "SPY", "QQQ", "DIA", "IWM", "VTI", "PLTR", "AMD",
+    "INTC", "NFLX", "CRM", "PYPL", "SQ", "BABA", "TSM", "UBER", "ABNB",
+}
+
+# Words that indicate a stock context
+_STOCK_CONTEXT_WORDS = re.compile(
+    r"\b(stock|shares?|equity|equities|nyse|nasdaq|ipo|earnings|dividend|eps|"
+    r"p/?e\s+ratio|market\s+cap|sec\s+filing|10-?[kq]|annual\s+report|"
+    r"options?|calls?|puts?|strike|expir)\b",
+    re.IGNORECASE,
+)
 
 # Map user-friendly timeframe strings to Binance interval codes
 TIMEFRAME_MAP = {
@@ -467,7 +493,39 @@ class TradingEngine:
             system=TRADING_SYSTEM_PROMPT,
         )
 
-    async def analyze(self, prompt: str, context: str = "", raw_question: str = "") -> str:
+    async def _fetch_stock_data(self, symbol: str, timeframe: str = "1D") -> str:
+        """Fetch live stock price and candle data from Yahoo Finance."""
+        try:
+            from src.clients.yahoo_finance import StockClient
+            async with StockClient() as client:
+                quote = await client.get_quote(symbol)
+                df = await client.get_klines(symbol, interval=timeframe)
+
+            price = quote.get("price", "N/A")
+            prev_close = quote.get("previousClose", 0)
+            change_pct = ((price - prev_close) / prev_close * 100) if prev_close else 0
+            exchange = quote.get("exchangeName", "")
+            state = quote.get("marketState", "")
+
+            candle_lines = []
+            for _, row in df.tail(10).iterrows():
+                candle_lines.append(
+                    f"  O:{row['Open']:.2f} H:{row['High']:.2f} "
+                    f"L:{row['Low']:.2f} C:{row['Close']:.2f} Vol:{row['Volume']:.0f}"
+                )
+
+            return (
+                f"STOCK: {symbol} ({exchange})\n"
+                f"Market State: {state}\n"
+                f"Price: ${price} ({change_pct:+.2f}% from prev close)\n"
+                f"Previous Close: ${prev_close}\n\n"
+                f"Recent {timeframe} candles:\n" + "\n".join(candle_lines)
+            )
+        except Exception as e:
+            log.warning("stock_data_fetch_failed", symbol=symbol, error=str(e))
+            return ""
+
+    async def analyze(self, prompt: str, context: str = "", raw_question: str = "") -> tuple[str, SymbolResult | None]:
         """Send a trading/strategy prompt to Claude (free-form handler).
 
         Args:
@@ -475,13 +533,20 @@ class TradingEngine:
             context: Prior conversation context for follow-up questions.
             raw_question: The user's original question text (used for symbol
                 extraction to avoid picking up tickers from intel data).
+
+        Returns:
+            Tuple of (response_text, symbol_result) where symbol_result
+            contains the detected symbol and its type (crypto/stock).
         """
         # Extract symbol from raw question only, not from enriched intel context
         extract_from = raw_question or prompt
-        symbol = _extract_symbol(extract_from)
+        sym = _extract_symbol(extract_from)
         market_info = ""
-        if symbol:
-            market_info = await self._fetch_market_data(symbol)
+        if sym:
+            if sym.asset_type == "stock":
+                market_info = await self._fetch_stock_data(sym.symbol)
+            else:
+                market_info = await self._fetch_market_data(sym.symbol)
 
         enriched_prompt = prompt
         if market_info:
@@ -493,40 +558,79 @@ class TradingEngine:
             messages.append({"role": "assistant", "content": "Understood. What would you like to analyze?"})
         messages.append({"role": "user", "content": enriched_prompt})
 
-        return await self.claude.complete_fast(
+        result = await self.claude.complete_fast(
             messages=messages, system=TRADING_SYSTEM_PROMPT,
         )
+        return result, sym
 
 
 # ── Helpers ────────────────────────────────────────────
 
-def _extract_symbol(text: str) -> str | None:
-    # Explicit pair first (BTCUSDT, BTC/USDT, etc.)
-    m = re.search(r"\b([A-Z]{2,10}(?:[/-]?USDT?|BUSD))\b", text.upper())
+class SymbolResult:
+    """Result of symbol extraction with asset type info."""
+    __slots__ = ("symbol", "asset_type")
+
+    def __init__(self, symbol: str, asset_type: str) -> None:
+        self.symbol = symbol          # e.g. "BTCUSDT" or "CRCL"
+        self.asset_type = asset_type  # "crypto" or "stock"
+
+    def __repr__(self) -> str:
+        return f"SymbolResult({self.symbol!r}, {self.asset_type!r})"
+
+    def __bool__(self) -> bool:
+        return bool(self.symbol)
+
+
+def _extract_symbol(text: str) -> SymbolResult | None:
+    """Extract a trading symbol from text, distinguishing crypto from stocks."""
+    upper = text.upper()
+    words = upper.split()
+
+    # 1. Explicit crypto pair (BTCUSDT, BTC/USDT, etc.)
+    m = re.search(r"\b([A-Z]{2,10}(?:[/-]?USDT?|BUSD))\b", upper)
     if m:
-        return m.group(1).replace("/", "").replace("-", "")
+        return SymbolResult(m.group(1).replace("/", "").replace("-", ""), "crypto")
 
-    words = text.upper().split()
+    has_stock_context = bool(_STOCK_CONTEXT_WORDS.search(text))
 
-    # Check company/project name → ticker mapping
+    # 2. Company name → stock ticker
     for word in words:
         clean = re.sub(r"[^A-Z]", "", word)
-        if clean in _COMPANY_TO_TICKER:
-            return _COMPANY_TO_TICKER[clean]
+        if clean in _COMPANY_TO_STOCK:
+            mapped = _COMPANY_TO_STOCK[clean]
+            if mapped.endswith("USDT"):
+                return SymbolResult(mapped, "crypto")
+            return SymbolResult(mapped, "stock")
 
-    # Bare ticker fallback — prefer known coins, then try any plausible ticker
+    # 3. Known stock ticker mentioned explicitly
+    for word in words:
+        clean = re.sub(r"[^A-Z]", "", word)
+        if clean in _KNOWN_STOCKS:
+            return SymbolResult(clean, "stock")
+
+    # 4. Known crypto coin
+    for word in words:
+        clean = re.sub(r"[^A-Z]", "", word)
+        if clean in KNOWN_COINS:
+            return SymbolResult(f"{clean}USDT", "crypto")
+
+    # 5. Unknown ticker — use stock context words to decide
     best_unknown: str | None = None
     for word in words:
         clean = re.sub(r"[^A-Z]", "", word)
         if len(clean) < 2 or len(clean) > 10:
             continue
-        if clean in KNOWN_COINS:
-            return f"{clean}USDT"
         if clean in _TICKER_STOPWORDS:
             continue
         if len(clean) >= 3 and best_unknown is None:
             best_unknown = clean
-    return f"{best_unknown}USDT" if best_unknown else None
+
+    if best_unknown:
+        if has_stock_context:
+            return SymbolResult(best_unknown, "stock")
+        return SymbolResult(f"{best_unknown}USDT", "crypto")
+
+    return None
 
 
 def _parse_levels(text: str) -> dict | None:

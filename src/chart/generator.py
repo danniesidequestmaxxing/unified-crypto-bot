@@ -14,6 +14,7 @@ import numpy as np
 import pandas as pd
 
 from src.clients.binance import BinanceClient
+from src.clients.yahoo_finance import StockClient
 
 # Map user-friendly timeframe strings to Binance interval codes
 TIMEFRAME_MAP = {
@@ -49,6 +50,11 @@ async def fetch_klines(binance: BinanceClient, symbol: str, timeframe: str) -> p
     for col in ("Open", "High", "Low", "Close", "Volume"):
         df[col] = df[col].astype(float)
     return df[["Open", "High", "Low", "Close", "Volume"]]
+
+
+async def fetch_stock_klines(stock_client: StockClient, symbol: str, timeframe: str) -> pd.DataFrame:
+    """Fetch OHLCV kline data from Yahoo Finance for stocks."""
+    return await stock_client.get_klines(symbol, interval=timeframe)
 
 
 def _compute_ema(series: pd.Series, period: int) -> pd.Series:
