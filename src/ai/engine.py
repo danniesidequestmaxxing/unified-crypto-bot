@@ -539,12 +539,17 @@ class TradingEngine:
 
         actual_symbol = symbol
 
-        # For unknown tickers, search Yahoo first to verify/resolve
-        # (e.g. "ARGO" might be delisted, search finds the right one)
+        # For unknown tickers, search Yahoo first to verify/resolve.
+        # Always search with the bare symbol FIRST (most reliable), then
+        # fall back to the full search_hint if the symbol search fails.
         if symbol not in _KNOWN_STOCKS and "." not in symbol:
             try:
                 async with StockClient() as client:
-                    resolved = await client.search_symbol(search_hint or symbol)
+                    # Try bare symbol first — cleanest query
+                    resolved = await client.search_symbol(symbol)
+                    if not resolved and search_hint and search_hint != symbol:
+                        # If bare symbol found nothing, try the hint
+                        resolved = await client.search_symbol(search_hint)
                     if resolved:
                         log.info("equity_search_resolved", original=symbol, resolved=resolved)
                         actual_symbol = resolved
@@ -561,39 +566,35 @@ class TradingEngine:
         except Exception as e:
             log.warning("equity_analysis_failed", symbol=actual_symbol, error=str(e))
 
-        # If we used the original symbol and it failed, try search fallback
-        if actual_symbol == symbol:
+        # If resolved to a different symbol and that failed, try the original
+        if actual_symbol != symbol:
+            try:
+                result = await EquityAnalyst().full_analysis(symbol)
+                ctx = result.get("formatted_context", "")
+                if ctx:
+                    return ctx
+            except Exception as e:
+                log.warning("equity_original_symbol_failed", symbol=symbol, error=str(e))
+
+        # Try basic quote as last resort (uses chart endpoint, no crumb needed)
+        for try_symbol in dict.fromkeys([actual_symbol, symbol]):
             try:
                 async with StockClient() as client:
-                    search_queries = [q for q in [search_hint, symbol] if q]
-                    for query in search_queries:
-                        resolved = await client.search_symbol(query)
-                        if resolved and resolved != symbol:
-                            log.info("equity_search_fallback", original=symbol, resolved=resolved)
-                            result = await EquityAnalyst().full_analysis(resolved)
-                            ctx = result.get("formatted_context", "")
-                            if ctx:
-                                return ctx
-                            break
-            except Exception as e:
-                log.warning("equity_search_fallback_failed", symbol=symbol, error=str(e))
-
-        # Try basic quote as last resort
-        try:
-            async with StockClient() as client:
-                quote = await client.get_quote(actual_symbol)
-                price = quote.get("price", "N/A")
-                prev = quote.get("previousClose", 0)
-                chg = ((price - prev) / prev * 100) if prev else 0
-                return (
-                    f"═══ EQUITY DATA: {actual_symbol} ═══\n"
-                    f"Price: ${price} ({chg:+.2f}%)\n"
-                    f"Currency: {quote.get('currency', 'USD')}\n"
-                    f"Exchange: {quote.get('exchangeName', 'N/A')}\n"
-                    f"(Full fundamental analysis unavailable for this ticker)\n"
-                )
-        except Exception:
-            pass
+                    quote = await client.get_quote(try_symbol)
+                    price = quote.get("price", "N/A")
+                    prev = quote.get("previousClose", 0)
+                    chg = ((price - prev) / prev * 100) if prev else 0
+                    name = quote.get("longName") or quote.get("shortName") or try_symbol
+                    return (
+                        f"═══ EQUITY DATA: {try_symbol} ({name}) ═══\n"
+                        f"Price: ${price} ({chg:+.2f}%)\n"
+                        f"Currency: {quote.get('currency', 'USD')}\n"
+                        f"Exchange: {quote.get('exchangeName', 'N/A')}\n"
+                        f"Type: {quote.get('instrumentType', 'N/A')}\n"
+                        f"(Full fundamental analysis unavailable — only basic quote data)\n"
+                    )
+            except Exception:
+                continue
 
         # NEVER return empty — give Claude context about what happened
         return (
