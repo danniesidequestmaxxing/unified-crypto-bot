@@ -637,7 +637,10 @@ class TradingEngine:
             enriched_prompt = f"{prompt}\n\n{market_info}"
 
         messages = []
-        if context:
+        # Skip prior chat context for equity analysis — it's self-contained
+        # and prior crypto context can pollute the output with irrelevant
+        # crypto-rotation narratives.
+        if context and system_prompt is not EQUITY_ANALYST_PROMPT:
             messages.append({"role": "user", "content": context})
             messages.append({"role": "assistant", "content": "Understood. What would you like to analyze?"})
         messages.append({"role": "user", "content": enriched_prompt})

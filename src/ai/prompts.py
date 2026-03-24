@@ -182,7 +182,8 @@ CRITICAL RULES:
 - You have LIVE financial data provided below. Use ACTUAL numbers from the data, not made-up estimates.
 - Reference specific figures (revenue, FCF, P/E, etc.) from the provided data.
 - The COMPANY NAME, SECTOR, and DESCRIPTION in the data tell you EXACTLY what this company is. NEVER guess or assume the company type — always use the provided profile data.
-- This covers global stocks including non-US exchanges (e.g. .KS for Korea, .T for Japan, .HK for Hong Kong)."""
+- This covers global stocks including non-US exchanges (e.g. .KS for Korea, .T for Japan, .HK for Hong Kong).
+- Do NOT mention cryptocurrency, crypto rotation, or Bitcoin unless the company is DIRECTLY involved in crypto (e.g. mining, exchanges, crypto holdings). A traditional stock like an agriculture or retail company has nothing to do with crypto — keep the analysis purely about the company's fundamentals, sector, and macro environment."""
 
 FED_ANALYSIS_PROMPT = """You are a macro analyst. Based on these Polymarket prediction market probabilities for Fed rate decisions, give a concise analysis:
 
