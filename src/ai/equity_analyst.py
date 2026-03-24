@@ -39,20 +39,51 @@ class EquityAnalyst:
 
     # Peer groups by sector/theme for comparable analysis
     PEER_GROUPS: dict[str, list[str]] = {
-        "CRCL": ["COIN", "HOOD", "SQ", "PYPL"],       # fintech / crypto-adjacent
-        "COIN": ["CRCL", "HOOD", "MARA", "RIOT"],      # crypto
-        "MSTR": ["COIN", "MARA", "RIOT", "CLSK"],      # BTC-correlated
-        "TSLA": ["RIVN", "LCID", "GM", "F"],            # auto/EV
-        "AAPL": ["MSFT", "GOOGL", "AMZN", "META"],     # mega-cap tech
-        "NVDA": ["AMD", "INTC", "TSM", "AVGO"],        # semiconductors
-        "TSM": ["NVDA", "AMD", "INTC", "AVGO"],          # semiconductors
-        "MSFT": ["AAPL", "GOOGL", "AMZN", "META"],     # mega-cap tech
-        "GOOGL": ["META", "MSFT", "AMZN", "AAPL"],     # mega-cap tech
-        "META": ["GOOGL", "SNAP", "PINS", "MSFT"],     # social/ad-tech
-        "AMZN": ["SHOP", "WMT", "MSFT", "GOOGL"],      # e-comm/cloud
-        "HOOD": ["COIN", "SCHW", "IBKR", "CRCL"],      # brokerages
-        "MARA": ["RIOT", "CLSK", "BITF", "HIVE"],      # BTC mining
-        "RIOT": ["MARA", "CLSK", "BITF", "HIVE"],      # BTC mining
+        # ── Crypto-adjacent / fintech ──
+        "CRCL": ["COIN", "HOOD", "SQ", "PYPL"],
+        "COIN": ["CRCL", "HOOD", "MARA", "RIOT"],
+        "MSTR": ["COIN", "MARA", "RIOT", "CLSK"],
+        "HOOD": ["COIN", "SCHW", "IBKR", "CRCL"],
+        "GBTC": ["COIN", "MSTR", "MARA", "RIOT"],
+        "GLXY": ["COIN", "MSTR", "MARA", "RIOT"],
+        # ── BTC mining ──
+        "MARA": ["RIOT", "CLSK", "BITF", "HIVE"],
+        "RIOT": ["MARA", "CLSK", "BITF", "HIVE"],
+        "CLSK": ["MARA", "RIOT", "BITF", "HIVE"],
+        "HIVE": ["MARA", "RIOT", "CLSK", "BITF"],
+        "BITF": ["MARA", "RIOT", "CLSK", "HIVE"],
+        # ── Mega-cap tech ──
+        "AAPL": ["MSFT", "GOOGL", "AMZN", "META"],
+        "MSFT": ["AAPL", "GOOGL", "AMZN", "META"],
+        "GOOGL": ["META", "MSFT", "AMZN", "AAPL"],
+        "META": ["GOOGL", "SNAP", "PINS", "MSFT"],
+        "AMZN": ["SHOP", "WMT", "MSFT", "GOOGL"],
+        # ── Semiconductors ──
+        "NVDA": ["AMD", "INTC", "TSM", "AVGO"],
+        "TSM": ["NVDA", "AMD", "INTC", "AVGO"],
+        "AMD": ["NVDA", "INTC", "TSM", "AVGO"],
+        "INTC": ["AMD", "NVDA", "TSM", "AVGO"],
+        # ── Auto / EV ──
+        "TSLA": ["RIVN", "LCID", "GM", "F"],
+        # ── Streaming / entertainment ──
+        "NFLX": ["DIS", "WBD", "PARA", "ROKU"],
+        # ── Enterprise SaaS / cloud ──
+        "CRM": ["NOW", "WDAY", "ORCL", "SAP"],
+        "PLTR": ["CRM", "NOW", "SNOW", "AI"],
+        # ── Fintech / payments ──
+        "PYPL": ["SQ", "V", "MA", "AFRM"],
+        "SQ": ["PYPL", "V", "MA", "AFRM"],
+        # ── E-commerce / China tech ──
+        "BABA": ["JD", "PDD", "BIDU", "TCEHY"],
+        # ── Ride-hailing / travel ──
+        "UBER": ["LYFT", "DASH", "ABNB", "BKNG"],
+        "ABNB": ["BKNG", "EXPE", "MAR", "UBER"],
+        # ── Major ETFs ──
+        "SPY": ["QQQ", "DIA", "IWM", "VTI"],
+        "QQQ": ["SPY", "VGT", "XLK", "ARKK"],
+        "DIA": ["SPY", "IWM", "VTI", "QQQ"],
+        "IWM": ["SPY", "MDY", "VTI", "DIA"],
+        "VTI": ["SPY", "VOO", "IWM", "QQQ"],
     }
 
     # Default peer group for unknown stocks
