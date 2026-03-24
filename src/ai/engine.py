@@ -525,52 +525,84 @@ class TradingEngine:
     async def _fetch_equity_analysis(self, symbol: str, search_hint: str = "") -> str:
         """Fetch comprehensive equity analysis data (DCF, peers, financials).
 
-        If the symbol fails (e.g. non-US ticker not in Yahoo), falls back to
-        Yahoo Finance search to resolve the company name to a valid ticker.
+        For unknown tickers (not in _KNOWN_STOCKS), searches Yahoo Finance first
+        to resolve/verify the ticker. Never returns empty string — always provides
+        context so Claude can give an informed response.
 
         Args:
             symbol: The stock ticker to look up.
-            search_hint: Original user text to use for Yahoo search fallback
+            search_hint: Original user text to use for Yahoo search
                 (better results than searching by bare ticker alone).
         """
-        try:
-            from src.ai.equity_analyst import EquityAnalyst
-            analyst = EquityAnalyst()
-            result = await analyst.full_analysis(symbol)
-            return result.get("formatted_context", "")
-        except Exception as e:
-            log.warning("equity_analysis_failed", symbol=symbol, error=str(e))
-            # Fallback: search Yahoo Finance to find the correct ticker
-            try:
-                from src.clients.yahoo_finance import StockClient
-                async with StockClient() as client:
-                    # Try searching with the user's original text first (more context),
-                    # then fall back to just the ticker symbol
-                    search_queries = []
-                    if search_hint:
-                        search_queries.append(search_hint)
-                    search_queries.append(symbol)
+        from src.ai.equity_analyst import EquityAnalyst
+        from src.clients.yahoo_finance import StockClient
 
-                    resolved = None
+        actual_symbol = symbol
+
+        # For unknown tickers, search Yahoo first to verify/resolve
+        # (e.g. "ARGO" might be delisted, search finds the right one)
+        if symbol not in _KNOWN_STOCKS and "." not in symbol:
+            try:
+                async with StockClient() as client:
+                    resolved = await client.search_symbol(search_hint or symbol)
+                    if resolved:
+                        log.info("equity_search_resolved", original=symbol, resolved=resolved)
+                        actual_symbol = resolved
+            except Exception as e:
+                log.warning("equity_search_preflight_failed", symbol=symbol, error=str(e))
+
+        # Try full analysis with the (possibly resolved) symbol
+        try:
+            analyst = EquityAnalyst()
+            result = await analyst.full_analysis(actual_symbol)
+            ctx = result.get("formatted_context", "")
+            if ctx:
+                return ctx
+        except Exception as e:
+            log.warning("equity_analysis_failed", symbol=actual_symbol, error=str(e))
+
+        # If we used the original symbol and it failed, try search fallback
+        if actual_symbol == symbol:
+            try:
+                async with StockClient() as client:
+                    search_queries = [q for q in [search_hint, symbol] if q]
                     for query in search_queries:
                         resolved = await client.search_symbol(query)
                         if resolved and resolved != symbol:
+                            log.info("equity_search_fallback", original=symbol, resolved=resolved)
+                            result = await EquityAnalyst().full_analysis(resolved)
+                            ctx = result.get("formatted_context", "")
+                            if ctx:
+                                return ctx
                             break
+            except Exception as e:
+                log.warning("equity_search_fallback_failed", symbol=symbol, error=str(e))
 
-                    if resolved and resolved != symbol:
-                        log.info("equity_search_fallback", original=symbol, resolved=resolved)
-                        from src.ai.equity_analyst import EquityAnalyst
-                        analyst = EquityAnalyst()
-                        result = await analyst.full_analysis(resolved)
-                        return result.get("formatted_context", "")
-                    # Last resort: basic quote
-                    quote = await client.get_quote(symbol)
-                    price = quote.get("price", "N/A")
-                    prev = quote.get("previousClose", 0)
-                    chg = ((price - prev) / prev * 100) if prev else 0
-                    return f"STOCK: {symbol}\nPrice: ${price} ({chg:+.2f}%)\n(Full analysis unavailable: {e})"
-            except Exception:
-                return ""
+        # Try basic quote as last resort
+        try:
+            async with StockClient() as client:
+                quote = await client.get_quote(actual_symbol)
+                price = quote.get("price", "N/A")
+                prev = quote.get("previousClose", 0)
+                chg = ((price - prev) / prev * 100) if prev else 0
+                return (
+                    f"═══ EQUITY DATA: {actual_symbol} ═══\n"
+                    f"Price: ${price} ({chg:+.2f}%)\n"
+                    f"Currency: {quote.get('currency', 'USD')}\n"
+                    f"Exchange: {quote.get('exchangeName', 'N/A')}\n"
+                    f"(Full fundamental analysis unavailable for this ticker)\n"
+                )
+        except Exception:
+            pass
+
+        # NEVER return empty — give Claude context about what happened
+        return (
+            f"═══ STOCK LOOKUP FAILED: {symbol} ═══\n"
+            f"Could not fetch financial data for '{symbol}'. "
+            f"This ticker may be delisted, invalid, or not available on Yahoo Finance.\n"
+            f"If the user is asking about a specific company, ask them to clarify "
+            f"the exact ticker symbol or company name.\n"
+        )
 
     async def analyze(self, prompt: str, context: str = "", raw_question: str = "") -> tuple[str, SymbolResult | None]:
         """Send a trading/strategy prompt to Claude (free-form handler).
