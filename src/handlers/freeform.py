@@ -455,7 +455,7 @@ async def _route_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None
             enriched += fed_context
         if intel_context:
             enriched += intel_context
-        result = await engine.analyze(enriched, context)
+        result = await engine.analyze(enriched, context, raw_question=text)
         chat_context[chat_id] = result
         await send_long(update, result)
 

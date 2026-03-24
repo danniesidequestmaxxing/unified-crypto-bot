@@ -52,9 +52,23 @@ _TICKER_STOPWORDS = {
     "BOUGHT", "SHORT", "PUTS", "GENERATE", "UPSIDE", "RECENT", "THEIR",
     "BEEN", "SELL", "BUY", "DIP", "NEWS", "THINK", "TELL", "SHOW", "HELP",
     "DOES", "MUCH", "ABOUT", "STILL", "DOWN", "KEEP", "WHICH", "WHERE",
+    "DOING", "REALLY", "RIGHT", "NEXT", "THESE", "THOSE", "AFTER", "BEFORE",
+    "LAST", "SAME", "NEED", "WORK", "FEEL", "MOVE", "PLAY", "TURN", "HOLD",
+    "OPEN", "CLOSE", "LEFT", "BEST", "BOTH", "EVEN", "WELL", "MANY",
     # Trading / finance terms (not tickers)
     "FIRST", "PRICE", "CURRENT", "TRADE", "RECOMMEND", "STRATEGY", "TRADING",
-    "ANALYSIS", "MARKET", "TODAY", "CHECK", "CHART", "STOCK", "CIRCLE",
+    "ANALYSIS", "MARKET", "TODAY", "CHECK", "CHART", "STOCK",
+}
+
+# Map company names / crypto project names to their Binance-tradable tickers
+_COMPANY_TO_TICKER: dict[str, str] = {
+    "CIRCLE": "USDCUSDT",
+    "COINBASE": "BTCUSDT",  # proxy — no COIN token on Binance
+    "MICROSTRATEGY": "BTCUSDT",  # BTC proxy
+    "STRATEGY": "BTCUSDT",  # new name for MicroStrategy
+    "TESLA": "DOGEUSDT",  # meme proxy
+    "RIPPLE": "XRPUSDT",
+    "TETHER": "BTCUSDT",  # stablecoin issuer
 }
 
 # Map user-friendly timeframe strings to Binance interval codes
@@ -453,9 +467,18 @@ class TradingEngine:
             system=TRADING_SYSTEM_PROMPT,
         )
 
-    async def analyze(self, prompt: str, context: str = "") -> str:
-        """Send a trading/strategy prompt to Claude (free-form handler)."""
-        symbol = _extract_symbol(prompt)
+    async def analyze(self, prompt: str, context: str = "", raw_question: str = "") -> str:
+        """Send a trading/strategy prompt to Claude (free-form handler).
+
+        Args:
+            prompt: The full enriched prompt (may include intel context).
+            context: Prior conversation context for follow-up questions.
+            raw_question: The user's original question text (used for symbol
+                extraction to avoid picking up tickers from intel data).
+        """
+        # Extract symbol from raw question only, not from enriched intel context
+        extract_from = raw_question or prompt
+        symbol = _extract_symbol(extract_from)
         market_info = ""
         if symbol:
             market_info = await self._fetch_market_data(symbol)
@@ -482,9 +505,18 @@ def _extract_symbol(text: str) -> str | None:
     m = re.search(r"\b([A-Z]{2,10}(?:[/-]?USDT?|BUSD))\b", text.upper())
     if m:
         return m.group(1).replace("/", "").replace("-", "")
+
+    words = text.upper().split()
+
+    # Check company/project name → ticker mapping
+    for word in words:
+        clean = re.sub(r"[^A-Z]", "", word)
+        if clean in _COMPANY_TO_TICKER:
+            return _COMPANY_TO_TICKER[clean]
+
     # Bare ticker fallback — prefer known coins, then try any plausible ticker
     best_unknown: str | None = None
-    for word in text.upper().split():
+    for word in words:
         clean = re.sub(r"[^A-Z]", "", word)
         if len(clean) < 2 or len(clean) > 10:
             continue
