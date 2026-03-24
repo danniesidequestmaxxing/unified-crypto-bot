@@ -159,13 +159,23 @@ async def _gather_intel(text: str, deps: dict) -> str:
     mentions = data.get("mentions")
     if mentions and not isinstance(mentions, Exception):
         items = mentions.get("data", []) if isinstance(mentions, dict) else []
-        if items:
+        if isinstance(items, list) and items:
             mention_lines = []
             for m in items[:8]:
-                author = m.get("username", m.get("author", ""))
-                content = m.get("content", m.get("text", ""))[:200]
-                if content:
-                    mention_lines.append(f"  @{author}: {content}")
+                if not isinstance(m, dict):
+                    continue
+                acc = m.get("account", {}) or {}
+                username = acc.get("username", "") if isinstance(acc, dict) else ""
+                content = m.get("content", m.get("text", ""))
+                if not content:
+                    continue
+                content = str(content)[:200]
+                likes = m.get("likeCount", 0)
+                views = m.get("viewCount", 0)
+                prefix = f"@{username}" if username else "anon"
+                mention_lines.append(
+                    f"  {prefix} ({likes} likes, {views} views): {content}"
+                )
             if mention_lines:
                 parts.append(
                     f"\n\n--- SOCIAL INTELLIGENCE (Elfa AI — last 24h for '{keywords}') ---\n"
@@ -176,7 +186,7 @@ async def _gather_intel(text: str, deps: dict) -> str:
     narratives = data.get("narratives")
     if narratives and not isinstance(narratives, Exception):
         items = narratives.get("data", []) if isinstance(narratives, dict) else []
-        if items:
+        if isinstance(items, list) and items:
             narr_lines = []
             for n in items[:5]:
                 title = n.get("title", n.get("narrative", ""))
