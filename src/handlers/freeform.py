@@ -114,6 +114,103 @@ async def _fetch_btc_price(deps: dict) -> str:
     return ""
 
 
+def _extract_keywords(text: str) -> str:
+    """Extract meaningful keywords from user text for Elfa search."""
+    # Remove common question words, keep nouns/proper nouns
+    stop = {
+        "what", "is", "are", "the", "a", "an", "how", "why", "when", "where",
+        "do", "does", "did", "can", "could", "will", "would", "should", "to",
+        "in", "on", "at", "for", "of", "with", "about", "happening", "going",
+        "think", "tell", "me", "give", "show", "please", "stock", "price",
+        "right", "now", "today", "currently",
+    }
+    words = [w for w in re.sub(r"[^\w\s]", "", text).split() if w.lower() not in stop]
+    return " ".join(words[:5]) if words else text[:50]
+
+
+async def _gather_intel(text: str, deps: dict) -> str:
+    """Pull real-time intelligence from Elfa AI + CoinDesk for general Q&A."""
+    parts: list[str] = []
+    keywords = _extract_keywords(text)
+
+    # Build parallel tasks
+    tasks: dict[str, asyncio.Task] = {}
+
+    elfa = deps.get("elfa")
+    if elfa:
+        tasks["mentions"] = asyncio.ensure_future(
+            elfa.keyword_mentions(keywords, timeframe="24h", limit=10)
+        )
+        tasks["narratives"] = asyncio.ensure_future(
+            elfa.trending_narratives(timeframe="24h")
+        )
+
+    tasks["news"] = asyncio.ensure_future(
+        fetch_crypto_news(limit=8, hours=12)
+    )
+
+    if not tasks:
+        return ""
+
+    results = await asyncio.gather(*tasks.values(), return_exceptions=True)
+    data = dict(zip(tasks.keys(), results))
+
+    # Elfa keyword mentions (social intelligence)
+    mentions = data.get("mentions")
+    if mentions and not isinstance(mentions, Exception):
+        items = mentions.get("data", []) if isinstance(mentions, dict) else []
+        if items:
+            mention_lines = []
+            for m in items[:8]:
+                author = m.get("username", m.get("author", ""))
+                content = m.get("content", m.get("text", ""))[:200]
+                if content:
+                    mention_lines.append(f"  @{author}: {content}")
+            if mention_lines:
+                parts.append(
+                    f"\n\n--- SOCIAL INTELLIGENCE (Elfa AI — last 24h for '{keywords}') ---\n"
+                    + "\n".join(mention_lines)
+                )
+
+    # Elfa trending narratives
+    narratives = data.get("narratives")
+    if narratives and not isinstance(narratives, Exception):
+        items = narratives.get("data", []) if isinstance(narratives, dict) else []
+        if items:
+            narr_lines = []
+            for n in items[:5]:
+                title = n.get("title", n.get("narrative", ""))
+                summary = n.get("summary", "")
+                if title:
+                    narr_lines.append(f"  - {title}: {summary}" if summary else f"  - {title}")
+            if narr_lines:
+                parts.append(
+                    "\n\n--- TRENDING NARRATIVES (Elfa AI) ---\n"
+                    + "\n".join(narr_lines)
+                )
+
+    # CoinDesk news headlines
+    news = data.get("news")
+    if news and not isinstance(news, Exception) and isinstance(news, list):
+        headlines = [
+            f"  - [{n.get('source', 'CoinDesk')}] {n['title']}"
+            for n in news[:6] if n.get("title")
+        ]
+        if headlines:
+            parts.append(
+                "\n\n--- RECENT CRYPTO NEWS (last 12h) ---\n"
+                + "\n".join(headlines)
+            )
+
+    if parts:
+        return (
+            "\n\n".join(parts)
+            + "\n\nUse the above real-time data to inform your answer. "
+            "Cite specific data points where relevant."
+        )
+    return ""
+
+
 async def _generate_and_send_chart(
     update: Update, deps: dict, symbol: str, timeframe: str,
     levels: dict | None = None,
@@ -337,8 +434,13 @@ async def _route_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None
         await _generate_and_send_chart(update, deps, symbol, timeframe, levels)
         await send_long(update, analysis_text)
     else:
-        # ── Route 5: General Q&A — no chart ──
-        enriched = text + fed_context if fed_context else text
+        # ── Route 5: General Q&A — enrich with live intel, then answer ──
+        intel_context = await _gather_intel(text, deps)
+        enriched = text
+        if fed_context:
+            enriched += fed_context
+        if intel_context:
+            enriched += intel_context
         result = await engine.analyze(enriched, context)
         chat_context[chat_id] = result
         await send_long(update, result)
