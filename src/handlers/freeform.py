@@ -253,9 +253,17 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None
     except Exception as exc:
         log.error("freeform_handler_error", error=str(exc), exc_info=True)
         try:
-            await update.message.reply_text(
-                f"Error: {type(exc).__name__}: {exc}"
-            )
+            # Friendly message — never dump raw errors to users
+            exc_name = type(exc).__name__
+            if "RateLimit" in exc_name or "429" in str(exc):
+                msg = "⏳ AI is temporarily overloaded. Please try again in a minute."
+            elif "Overloaded" in exc_name or "529" in str(exc):
+                msg = "⏳ AI service is busy right now. Please try again shortly."
+            elif "Authentication" in exc_name or "401" in str(exc):
+                msg = "⚠️ Service configuration error. Please contact the admin."
+            else:
+                msg = "⚠️ Something went wrong processing your request. Please try again."
+            await update.message.reply_text(msg)
         except Exception:
             pass
 
