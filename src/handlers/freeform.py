@@ -60,11 +60,10 @@ _FED_KEYWORDS = re.compile(
     re.IGNORECASE,
 )
 
-# News keywords
+# News keywords — only match explicit news requests, not general "what is happening to X" questions
 _NEWS_KEYWORDS = re.compile(
     r"\b(news|headlines?|latest\s+(?:crypto|market|bitcoin|btc)|"
-    r"what(?:'s|\s+is)\s+happening|market\s+update|crypto\s+update|"
-    r"what\s+happened|recent\s+events?)\b",
+    r"market\s+update|crypto\s+update|recent\s+events?)\b",
     re.IGNORECASE,
 )
 
