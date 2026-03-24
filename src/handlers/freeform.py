@@ -60,10 +60,14 @@ _FED_KEYWORDS = re.compile(
     re.IGNORECASE,
 )
 
-# News keywords — only match explicit news requests, not general "what is happening to X" questions
+# News keywords — only match when user is explicitly requesting a news digest/summary.
+# Phrases like "its recent news" or "news about X" are questions ABOUT news, not requests FOR news.
 _NEWS_KEYWORDS = re.compile(
-    r"\b(news|headlines?|latest\s+(?:crypto|market|bitcoin|btc)|"
-    r"market\s+update|crypto\s+update|recent\s+events?)\b",
+    r"(?:^|\b)(?:show|get|give|fetch|pull|what(?:'?s| is| are) the)\s+"
+    r"(?:me\s+)?(?:the\s+)?(?:latest\s+)?(?:news|headlines?)"
+    r"|^(?:news|headlines?)$"
+    r"|\b(?:latest\s+(?:crypto|market|bitcoin|btc)\s+(?:news|headlines?)|"
+    r"market\s+update|crypto\s+update|news\s+summary|news\s+digest)\b",
     re.IGNORECASE,
 )
 
