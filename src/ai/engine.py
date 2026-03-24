@@ -11,7 +11,7 @@ from collections import Counter
 
 import structlog
 
-from src.ai.prompts import TRADING_SYSTEM_PROMPT
+from src.ai.prompts import EQUITY_ANALYST_PROMPT, TRADING_SYSTEM_PROMPT
 from src.clients.binance import BinanceClient
 from src.clients.claude import ClaudeService
 from src.clients.coingecko import CoinGeckoClient
@@ -493,37 +493,26 @@ class TradingEngine:
             system=TRADING_SYSTEM_PROMPT,
         )
 
-    async def _fetch_stock_data(self, symbol: str, timeframe: str = "1D") -> str:
-        """Fetch live stock price and candle data from Yahoo Finance."""
+    async def _fetch_equity_analysis(self, symbol: str) -> str:
+        """Fetch comprehensive equity analysis data (DCF, peers, financials)."""
         try:
-            from src.clients.yahoo_finance import StockClient
-            async with StockClient() as client:
-                quote = await client.get_quote(symbol)
-                df = await client.get_klines(symbol, interval=timeframe)
-
-            price = quote.get("price", "N/A")
-            prev_close = quote.get("previousClose", 0)
-            change_pct = ((price - prev_close) / prev_close * 100) if prev_close else 0
-            exchange = quote.get("exchangeName", "")
-            state = quote.get("marketState", "")
-
-            candle_lines = []
-            for _, row in df.tail(10).iterrows():
-                candle_lines.append(
-                    f"  O:{row['Open']:.2f} H:{row['High']:.2f} "
-                    f"L:{row['Low']:.2f} C:{row['Close']:.2f} Vol:{row['Volume']:.0f}"
-                )
-
-            return (
-                f"STOCK: {symbol} ({exchange})\n"
-                f"Market State: {state}\n"
-                f"Price: ${price} ({change_pct:+.2f}% from prev close)\n"
-                f"Previous Close: ${prev_close}\n\n"
-                f"Recent {timeframe} candles:\n" + "\n".join(candle_lines)
-            )
+            from src.ai.equity_analyst import EquityAnalyst
+            analyst = EquityAnalyst()
+            result = await analyst.full_analysis(symbol)
+            return result.get("formatted_context", "")
         except Exception as e:
-            log.warning("stock_data_fetch_failed", symbol=symbol, error=str(e))
-            return ""
+            log.warning("equity_analysis_failed", symbol=symbol, error=str(e))
+            # Fallback to basic quote data
+            try:
+                from src.clients.yahoo_finance import StockClient
+                async with StockClient() as client:
+                    quote = await client.get_quote(symbol)
+                price = quote.get("price", "N/A")
+                prev = quote.get("previousClose", 0)
+                chg = ((price - prev) / prev * 100) if prev else 0
+                return f"STOCK: {symbol}\nPrice: ${price} ({chg:+.2f}%)\n(Full analysis unavailable: {e})"
+            except Exception:
+                return ""
 
     async def analyze(self, prompt: str, context: str = "", raw_question: str = "") -> tuple[str, SymbolResult | None]:
         """Send a trading/strategy prompt to Claude (free-form handler).
@@ -542,15 +531,18 @@ class TradingEngine:
         extract_from = raw_question or prompt
         sym = _extract_symbol(extract_from)
         market_info = ""
+        system_prompt = TRADING_SYSTEM_PROMPT
+
         if sym:
             if sym.asset_type == "stock":
-                market_info = await self._fetch_stock_data(sym.symbol)
+                market_info = await self._fetch_equity_analysis(sym.symbol)
+                system_prompt = EQUITY_ANALYST_PROMPT
             else:
                 market_info = await self._fetch_market_data(sym.symbol)
 
         enriched_prompt = prompt
         if market_info:
-            enriched_prompt = f"{prompt}\n\nReal-time market data:\n{market_info}"
+            enriched_prompt = f"{prompt}\n\n{market_info}"
 
         messages = []
         if context:
@@ -559,7 +551,7 @@ class TradingEngine:
         messages.append({"role": "user", "content": enriched_prompt})
 
         result = await self.claude.complete_fast(
-            messages=messages, system=TRADING_SYSTEM_PROMPT,
+            messages=messages, system=system_prompt,
         )
         return result, sym
 

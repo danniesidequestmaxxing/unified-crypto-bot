@@ -419,9 +419,16 @@ async def _route_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None
         asset_type = sym_result.asset_type
 
         if asset_type == "stock":
-            # For stocks, use general Q&A with stock data (no suggest_trade)
-            # Route to Route 5 logic below
-            pass
+            # Stock: equity analysis (DCF, peers) + daily chart
+            intel_context = await _gather_intel(text, deps)
+            enriched = text
+            if intel_context:
+                enriched += intel_context
+            result, _ = await engine.analyze(enriched, context, raw_question=text)
+            chat_context[chat_id] = result
+            await _generate_and_send_chart(update, deps, ticker, "1D", asset_type="stock")
+            await send_long(update, result)
+            return
         else:
             extra = context
             analysis_text, levels = await engine.suggest_trade(ticker, timeframe, extra)

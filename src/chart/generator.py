@@ -74,6 +74,10 @@ def generate_chart(
     levels: dict | None = None,
 ) -> bytes:
     """Render a candlestick chart with EMA, RSI, volume, and trade levels."""
+    # mplfinance needs timezone-naive DatetimeIndex
+    if hasattr(df.index, 'tz') and df.index.tz is not None:
+        df = df.copy()
+        df.index = df.index.tz_localize(None)
     ema9 = _compute_ema(df["Close"], 9)
     ema21 = _compute_ema(df["Close"], 21)
     rsi = _compute_rsi(df["Close"], 14)
