@@ -15,7 +15,18 @@ log = structlog.get_logger()
 
 _CHART_URL = "https://query1.finance.yahoo.com/v8/finance/chart"
 _SUMMARY_URL = "https://query2.finance.yahoo.com/v10/finance/quoteSummary"
-_HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; UnifiedSignalBot/1.0)"}
+_CRUMB_URL = "https://query2.finance.yahoo.com/v1/test/getcrumb"
+_CONSENT_URL = "https://fc.yahoo.com"
+_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/131.0.0.0 Safari/537.36"
+    ),
+}
+
+# Module-level cache for crumb + cookie jar (shared across StockClient instances)
+_crumb_cache: dict[str, object] = {"crumb": None, "jar": None}
 
 # Map user-friendly timeframes to Yahoo Finance intervals
 STOCK_TIMEFRAME_MAP = {
@@ -67,7 +78,7 @@ KNOWN_STOCKS: set[str] = {
 
 
 class StockClient:
-    """Async client for Yahoo Finance chart data."""
+    """Async client for Yahoo Finance chart + fundamental data."""
 
     def __init__(self, session: aiohttp.ClientSession | None = None) -> None:
         self._session = session
@@ -75,9 +86,40 @@ class StockClient:
 
     async def _get_session(self) -> aiohttp.ClientSession:
         if self._session is None or self._session.closed:
-            self._session = aiohttp.ClientSession(headers=_HEADERS)
+            jar = aiohttp.CookieJar()
+            self._session = aiohttp.ClientSession(headers=_HEADERS, cookie_jar=jar)
             self._owns_session = True
         return self._session
+
+    async def _get_crumb(self) -> str:
+        """Fetch a crumb token required for Yahoo Finance quoteSummary API.
+
+        Yahoo requires: 1) hit fc.yahoo.com to get cookies, 2) use those
+        cookies to fetch a crumb from the /v1/test/getcrumb endpoint.
+        The crumb is cached and reused across calls.
+        """
+        if _crumb_cache["crumb"]:
+            return _crumb_cache["crumb"]
+
+        session = await self._get_session()
+
+        # Step 1: Get cookies from Yahoo's consent endpoint
+        async with session.get(_CONSENT_URL) as resp:
+            pass  # We only need the cookies set by the response
+
+        # Step 2: Fetch crumb using the cookies
+        async with session.get(_CRUMB_URL) as resp:
+            if resp.status != 200:
+                raise ValueError(f"Failed to get Yahoo crumb: HTTP {resp.status}")
+            crumb = await resp.text()
+
+        _crumb_cache["crumb"] = crumb
+        log.info("yahoo_crumb_acquired", crumb_len=len(crumb))
+        return crumb
+
+    def _invalidate_crumb(self) -> None:
+        """Clear cached crumb so next call re-fetches it."""
+        _crumb_cache["crumb"] = None
 
     async def close(self) -> None:
         if self._owns_session and self._session and not self._session.closed:
@@ -190,19 +232,33 @@ class StockClient:
         Returns a dict with keys: profile, key_stats, financials,
         income_statements, balance_sheets, cash_flows, earnings, analyst.
         """
+        crumb = await self._get_crumb()
         url = f"{_SUMMARY_URL}/{symbol}"
         params = {
             "modules": self._FUNDAMENTAL_MODULES,
             "formatted": "false",
             "lang": "en-US",
             "region": "US",
+            "crumb": crumb,
         }
 
         session = await self._get_session()
         async with session.get(url, params=params) as resp:
-            if resp.status != 200:
+            if resp.status == 401:
+                # Crumb expired — retry once with fresh crumb
+                self._invalidate_crumb()
+                crumb = await self._get_crumb()
+                params["crumb"] = crumb
+                async with session.get(url, params=params) as retry_resp:
+                    if retry_resp.status != 200:
+                        raise ValueError(
+                            f"Yahoo quoteSummary returned {retry_resp.status} for {symbol}"
+                        )
+                    data = await retry_resp.json()
+            elif resp.status != 200:
                 raise ValueError(f"Yahoo quoteSummary returned {resp.status} for {symbol}")
-            data = await resp.json()
+            else:
+                data = await resp.json()
 
         qs = data.get("quoteSummary", {})
         error = qs.get("error")

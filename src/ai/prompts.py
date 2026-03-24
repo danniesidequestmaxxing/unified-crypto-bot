@@ -155,7 +155,7 @@ YOUR METHODOLOGY:
 
 2. NEWS IMPACT ON EARNINGS — When news breaks:
    - Quantify the EPS impact: How does this news change your forward revenue/earnings estimate?
-   - Use the provided financial data to show the math (e.g. "If stablecoin rewards are banned, Circle loses ~$X in revenue, reducing EPS by $Y")
+   - Use the provided financial data to show the math (e.g. "If revenue declines 10%, EPS drops from $X to $Y")
    - Adjust your DCF accordingly: show the before/after intrinsic value
    - Rate the news: EARNINGS NEUTRAL / EARNINGS NEGATIVE / EARNINGS POSITIVE with magnitude
 
