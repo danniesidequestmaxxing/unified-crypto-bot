@@ -269,10 +269,13 @@ class StockClient:
         meta = result.get("meta", {})
         return {
             "symbol": meta.get("symbol", symbol),
+            "shortName": meta.get("shortName", ""),
+            "longName": meta.get("longName", ""),
             "price": meta.get("regularMarketPrice"),
             "previousClose": meta.get("chartPreviousClose"),
             "currency": meta.get("currency", "USD"),
             "exchangeName": meta.get("exchangeName", ""),
+            "instrumentType": meta.get("instrumentType", ""),
             "marketState": meta.get("marketState", ""),
         }
 

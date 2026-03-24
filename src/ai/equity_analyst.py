@@ -348,11 +348,20 @@ class EquityAnalyst:
         analyst = fund.get("analyst", [])
 
         lines = []
-        lines.append(f"═══ EQUITY ANALYSIS DATA: {symbol} ═══\n")
+        # Company identity — use quote name so Claude knows EXACTLY what this company is
+        company_name = quote.get("longName") or quote.get("shortName") or symbol
+        instrument = quote.get("instrumentType", "EQUITY")
+        lines.append(f"═══ EQUITY ANALYSIS DATA: {symbol} ({company_name}) ═══\n")
 
-        # Company profile
-        lines.append(f"COMPANY: {profile.get('sector', 'N/A')} | {profile.get('industry', 'N/A')}")
-        lines.append(f"Summary: {profile.get('summary', 'N/A')}\n")
+        # Company profile — CRITICAL: Claude must use this, not guess
+        sector = profile.get("sector") or "N/A"
+        industry = profile.get("industry") or "N/A"
+        summary = profile.get("summary") or "N/A"
+        lines.append(f"COMPANY NAME: {company_name}")
+        lines.append(f"TYPE: {instrument}")
+        lines.append(f"SECTOR: {sector} | INDUSTRY: {industry}")
+        lines.append(f"COUNTRY: {profile.get('country', 'N/A')}")
+        lines.append(f"DESCRIPTION: {summary}\n")
 
         # Current quote
         price = quote.get("price")
