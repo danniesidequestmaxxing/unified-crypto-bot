@@ -70,7 +70,9 @@ COMPANY_TO_STOCK: dict[str, str] = {
     "TAIWAN SEMICONDUCTOR": "TSM",
     # International companies (non-US exchanges)
     "SK HYNIX": "000660.KS",
+    "SK HYNX": "000660.KS",
     "HYNIX": "000660.KS",
+    "HYNX": "000660.KS",
     "SAMSUNG": "005930.KS",
     "SAMSUNG ELECTRONICS": "005930.KS",
     "TOYOTA": "7203.T",

@@ -83,7 +83,9 @@ _COMPANY_TO_STOCK: dict[str, str] = {
     "TAIWAN SEMICONDUCTOR": "TSM",
     # International companies (non-US exchanges)
     "SK HYNIX": "000660.KS",
+    "SK HYNX": "000660.KS",
     "HYNIX": "000660.KS",
+    "HYNX": "000660.KS",
     "SAMSUNG": "005930.KS",
     "SAMSUNG ELECTRONICS": "005930.KS",
     "TOYOTA": "7203.T",
@@ -520,11 +522,16 @@ class TradingEngine:
             system=TRADING_SYSTEM_PROMPT,
         )
 
-    async def _fetch_equity_analysis(self, symbol: str) -> str:
+    async def _fetch_equity_analysis(self, symbol: str, search_hint: str = "") -> str:
         """Fetch comprehensive equity analysis data (DCF, peers, financials).
 
         If the symbol fails (e.g. non-US ticker not in Yahoo), falls back to
         Yahoo Finance search to resolve the company name to a valid ticker.
+
+        Args:
+            symbol: The stock ticker to look up.
+            search_hint: Original user text to use for Yahoo search fallback
+                (better results than searching by bare ticker alone).
         """
         try:
             from src.ai.equity_analyst import EquityAnalyst
@@ -533,11 +540,23 @@ class TradingEngine:
             return result.get("formatted_context", "")
         except Exception as e:
             log.warning("equity_analysis_failed", symbol=symbol, error=str(e))
-            # Fallback: search Yahoo Finance by company name to find correct ticker
+            # Fallback: search Yahoo Finance to find the correct ticker
             try:
                 from src.clients.yahoo_finance import StockClient
                 async with StockClient() as client:
-                    resolved = await client.search_symbol(symbol)
+                    # Try searching with the user's original text first (more context),
+                    # then fall back to just the ticker symbol
+                    search_queries = []
+                    if search_hint:
+                        search_queries.append(search_hint)
+                    search_queries.append(symbol)
+
+                    resolved = None
+                    for query in search_queries:
+                        resolved = await client.search_symbol(query)
+                        if resolved and resolved != symbol:
+                            break
+
                     if resolved and resolved != symbol:
                         log.info("equity_search_fallback", original=symbol, resolved=resolved)
                         from src.ai.equity_analyst import EquityAnalyst
@@ -574,7 +593,9 @@ class TradingEngine:
 
         if sym:
             if sym.asset_type == "stock":
-                market_info = await self._fetch_equity_analysis(sym.symbol)
+                market_info = await self._fetch_equity_analysis(
+                    sym.symbol, search_hint=extract_from,
+                )
                 system_prompt = EQUITY_ANALYST_PROMPT
             else:
                 market_info = await self._fetch_market_data(sym.symbol)
