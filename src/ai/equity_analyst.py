@@ -63,6 +63,10 @@ class EquityAnalyst:
         "TSM": ["NVDA", "AMD", "INTC", "AVGO"],
         "AMD": ["NVDA", "INTC", "TSM", "AVGO"],
         "INTC": ["AMD", "NVDA", "TSM", "AVGO"],
+        "000660.KS": ["TSM", "NVDA", "AMD", "AVGO"],  # SK Hynix
+        "005930.KS": ["TSM", "NVDA", "AAPL", "INTC"],  # Samsung
+        "ASML": ["TSM", "NVDA", "AMD", "INTC"],
+        "ARM": ["NVDA", "AMD", "INTC", "AVGO"],
         # ── Auto / EV ──
         "TSLA": ["RIVN", "LCID", "GM", "F"],
         # ── Streaming / entertainment ──

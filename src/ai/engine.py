@@ -81,14 +81,39 @@ _COMPANY_TO_STOCK: dict[str, str] = {
     "RIPPLE": "XRPUSDT",  # crypto, not stock
     "TSMC": "TSM",
     "TAIWAN SEMICONDUCTOR": "TSM",
+    # International companies (non-US exchanges)
+    "SK HYNIX": "000660.KS",
+    "HYNIX": "000660.KS",
+    "SAMSUNG": "005930.KS",
+    "SAMSUNG ELECTRONICS": "005930.KS",
+    "TOYOTA": "7203.T",
+    "SONY": "6758.T",
+    "SOFTBANK": "9984.T",
+    "ASML": "ASML",
+    "SAP": "SAP",
+    "NOVO NORDISK": "NVO",
+    "LVMH": "MC.PA",
+    "ARM": "ARM",
+    "ARM HOLDINGS": "ARM",
+    "BYD": "1211.HK",
+    "TENCENT": "0700.HK",
+    "ALIBABA": "BABA",
 }
 
-# Known stock tickers (not crypto)
+# Multi-word company names sorted longest-first for greedy matching
+_MULTIWORD_COMPANIES = sorted(
+    ((k, v) for k, v in _COMPANY_TO_STOCK.items() if " " in k),
+    key=lambda x: len(x[0]),
+    reverse=True,
+)
+
+# Known stock tickers (not crypto) — includes international exchange suffixes
 _KNOWN_STOCKS: set[str] = {
     "CRCL", "COIN", "MSTR", "TSLA", "AAPL", "NVDA", "MSFT", "GOOGL",
     "AMZN", "META", "HOOD", "MARA", "RIOT", "CLSK", "HIVE", "BITF",
     "GLXY", "GBTC", "SPY", "QQQ", "DIA", "IWM", "VTI", "PLTR", "AMD",
     "INTC", "NFLX", "CRM", "PYPL", "SQ", "BABA", "TSM", "UBER", "ABNB",
+    "ASML", "SAP", "NVO", "ARM",
 }
 
 # Words that indicate a stock context
@@ -496,7 +521,11 @@ class TradingEngine:
         )
 
     async def _fetch_equity_analysis(self, symbol: str) -> str:
-        """Fetch comprehensive equity analysis data (DCF, peers, financials)."""
+        """Fetch comprehensive equity analysis data (DCF, peers, financials).
+
+        If the symbol fails (e.g. non-US ticker not in Yahoo), falls back to
+        Yahoo Finance search to resolve the company name to a valid ticker.
+        """
         try:
             from src.ai.equity_analyst import EquityAnalyst
             analyst = EquityAnalyst()
@@ -504,15 +533,23 @@ class TradingEngine:
             return result.get("formatted_context", "")
         except Exception as e:
             log.warning("equity_analysis_failed", symbol=symbol, error=str(e))
-            # Fallback to basic quote data
+            # Fallback: search Yahoo Finance by company name to find correct ticker
             try:
                 from src.clients.yahoo_finance import StockClient
                 async with StockClient() as client:
+                    resolved = await client.search_symbol(symbol)
+                    if resolved and resolved != symbol:
+                        log.info("equity_search_fallback", original=symbol, resolved=resolved)
+                        from src.ai.equity_analyst import EquityAnalyst
+                        analyst = EquityAnalyst()
+                        result = await analyst.full_analysis(resolved)
+                        return result.get("formatted_context", "")
+                    # Last resort: basic quote
                     quote = await client.get_quote(symbol)
-                price = quote.get("price", "N/A")
-                prev = quote.get("previousClose", 0)
-                chg = ((price - prev) / prev * 100) if prev else 0
-                return f"STOCK: {symbol}\nPrice: ${price} ({chg:+.2f}%)\n(Full analysis unavailable: {e})"
+                    price = quote.get("price", "N/A")
+                    prev = quote.get("previousClose", 0)
+                    chg = ((price - prev) / prev * 100) if prev else 0
+                    return f"STOCK: {symbol}\nPrice: ${price} ({chg:+.2f}%)\n(Full analysis unavailable: {e})"
             except Exception:
                 return ""
 
@@ -587,7 +624,14 @@ def _extract_symbol(text: str) -> SymbolResult | None:
 
     has_stock_context = bool(_STOCK_CONTEXT_WORDS.search(text))
 
-    # 2. Company name → stock ticker
+    # 2a. Multi-word company name → stock ticker (check longest first)
+    for name, ticker in _MULTIWORD_COMPANIES:
+        if name in upper:
+            if ticker.endswith("USDT"):
+                return SymbolResult(ticker, "crypto")
+            return SymbolResult(ticker, "stock")
+
+    # 2b. Single-word company name → stock ticker
     for word in words:
         clean = re.sub(r"[^A-Z]", "", word)
         if clean in _COMPANY_TO_STOCK:

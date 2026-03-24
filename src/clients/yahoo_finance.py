@@ -15,6 +15,7 @@ log = structlog.get_logger()
 
 _CHART_URL = "https://query1.finance.yahoo.com/v8/finance/chart"
 _SUMMARY_URL = "https://query2.finance.yahoo.com/v10/finance/quoteSummary"
+_SEARCH_URL = "https://query2.finance.yahoo.com/v1/finance/search"
 _CRUMB_URL = "https://query2.finance.yahoo.com/v1/test/getcrumb"
 _CONSENT_URL = "https://fc.yahoo.com"
 _HEADERS = {
@@ -67,6 +68,23 @@ COMPANY_TO_STOCK: dict[str, str] = {
     "GRAYSCALE": "GBTC",
     "TSMC": "TSM",
     "TAIWAN SEMICONDUCTOR": "TSM",
+    # International companies (non-US exchanges)
+    "SK HYNIX": "000660.KS",
+    "HYNIX": "000660.KS",
+    "SAMSUNG": "005930.KS",
+    "SAMSUNG ELECTRONICS": "005930.KS",
+    "TOYOTA": "7203.T",
+    "SONY": "6758.T",
+    "SOFTBANK": "9984.T",
+    "ASML": "ASML",
+    "SAP": "SAP",
+    "NOVO NORDISK": "NVO",
+    "LVMH": "MC.PA",
+    "ARM": "ARM",
+    "ARM HOLDINGS": "ARM",
+    "BYD": "1211.HK",
+    "TENCENT": "0700.HK",
+    "ALIBABA": "BABA",
 }
 
 # Stock tickers that are NOT crypto tickers (avoids confusion)
@@ -74,6 +92,7 @@ KNOWN_STOCKS: set[str] = {
     "CRCL", "COIN", "MSTR", "TSLA", "AAPL", "NVDA", "MSFT", "GOOGL",
     "AMZN", "META", "HOOD", "MARA", "RIOT", "CLSK", "HIVE", "BITF",
     "GLXY", "GBTC", "SPY", "QQQ", "DIA", "IWM", "VTI",
+    "ASML", "SAP", "NVO", "ARM",
 }
 
 
@@ -130,6 +149,51 @@ class StockClient:
 
     async def __aexit__(self, *exc: object) -> None:
         await self.close()
+
+    async def search_symbol(self, query: str) -> str | None:
+        """Search Yahoo Finance for a company name and return the best ticker.
+
+        Uses Yahoo's autocomplete/search API to resolve company names
+        (especially non-US listed companies) to their Yahoo Finance ticker.
+        Returns the ticker string (e.g. '000660.KS') or None.
+        """
+        session = await self._get_session()
+        params = {
+            "q": query,
+            "quotesCount": 5,
+            "newsCount": 0,
+            "listsCount": 0,
+            "lang": "en-US",
+        }
+        try:
+            async with session.get(_SEARCH_URL, params=params) as resp:
+                if resp.status != 200:
+                    log.warning("yahoo_search_failed", query=query, status=resp.status)
+                    return None
+                data = await resp.json()
+
+            quotes = data.get("quotes", [])
+            if not quotes:
+                return None
+
+            # Prefer equity type results; pick first match
+            for q in quotes:
+                qtype = q.get("quoteType", "")
+                if qtype in ("EQUITY", "ETF"):
+                    symbol = q.get("symbol")
+                    log.info(
+                        "yahoo_search_resolved",
+                        query=query,
+                        symbol=symbol,
+                        name=q.get("shortname", ""),
+                    )
+                    return symbol
+
+            # Fallback: return first result regardless of type
+            return quotes[0].get("symbol")
+        except Exception as e:
+            log.warning("yahoo_search_error", query=query, error=str(e))
+            return None
 
     async def get_klines(
         self, symbol: str, interval: str = "1h", range_: str | None = None,
