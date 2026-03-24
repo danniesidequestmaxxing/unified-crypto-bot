@@ -86,8 +86,23 @@ class EquityAnalyst:
         "VTI": ["SPY", "VOO", "IWM", "QQQ"],
     }
 
-    # Default peer group for unknown stocks
-    DEFAULT_PEERS = ["SPY"]  # just compare to S&P 500
+    # Sector → representative peers for stocks not in PEER_GROUPS
+    SECTOR_PEERS: dict[str, list[str]] = {
+        "Technology": ["AAPL", "MSFT", "GOOGL", "META"],
+        "Communication Services": ["GOOGL", "META", "NFLX", "DIS"],
+        "Consumer Cyclical": ["AMZN", "TSLA", "HD", "NKE"],
+        "Consumer Defensive": ["PG", "KO", "PEP", "WMT"],
+        "Financial Services": ["JPM", "BAC", "GS", "V"],
+        "Healthcare": ["UNH", "JNJ", "LLY", "PFE"],
+        "Industrials": ["CAT", "HON", "UPS", "GE"],
+        "Energy": ["XOM", "CVX", "COP", "SLB"],
+        "Basic Materials": ["LIN", "APD", "ECL", "NEM"],
+        "Real Estate": ["PLD", "AMT", "CCI", "SPG"],
+        "Utilities": ["NEE", "DUK", "SO", "AEP"],
+    }
+
+    # Default peer group when sector is also unknown
+    DEFAULT_PEERS = ["SPY"]
 
     def __init__(self) -> None:
         pass
@@ -103,7 +118,15 @@ class EquityAnalyst:
             quote = await client.get_quote(symbol)
 
             # Fetch peer data for comparables
-            peers = self.PEER_GROUPS.get(symbol.upper(), self.DEFAULT_PEERS)
+            # 1) Check hardcoded peer groups first
+            # 2) Fall back to sector-based peers from the fetched profile
+            # 3) Last resort: compare to SPY
+            peers = self.PEER_GROUPS.get(symbol.upper())
+            if not peers:
+                sector = fundamentals.get("profile", {}).get("sector", "")
+                peers = self.SECTOR_PEERS.get(sector, self.DEFAULT_PEERS)
+                # Remove self from sector peers if present
+                peers = [p for p in peers if p != symbol.upper()]
             peer_data = {}
             for peer in peers[:4]:  # limit to 4 peers
                 try:
