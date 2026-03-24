@@ -147,7 +147,7 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None
         log.error("freeform_handler_error", error=str(exc), exc_info=True)
         try:
             await update.message.reply_text(
-                f"Something went wrong processing your message. Error: {type(exc).__name__}"
+                f"Error: {type(exc).__name__}: {exc}"
             )
         except Exception:
             pass
