@@ -93,7 +93,7 @@ def _extract_symbol(text: str) -> str | None:
 def _is_forwarded(update: Update) -> bool:
     """Check if the message is forwarded from another chat/channel."""
     msg = update.message
-    return bool(msg.forward_date or msg.forward_origin)
+    return bool(getattr(msg, "forward_origin", None) or getattr(msg, "forward_date", None))
 
 
 def _is_macro_data(text: str) -> bool:
