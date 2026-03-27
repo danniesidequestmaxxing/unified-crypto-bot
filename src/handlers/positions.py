@@ -14,6 +14,7 @@ from telegram import Update
 from telegram.constants import ChatAction
 from telegram.ext import ContextTypes
 
+from src.core.message_utils import friendly_error_message
 from src.modules.position_config import PNL_TARGET
 
 
@@ -40,7 +41,7 @@ async def cmd_positions(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     try:
         await monitor._send_hourly_update()
     except Exception as e:
-        await update.message.reply_text(f"❌ Error: {e}")
+        await update.message.reply_text(friendly_error_message(e))
 
 
 async def cmd_posplan(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
@@ -139,7 +140,7 @@ async def cmd_pospnl(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text(text, parse_mode="Markdown")
 
     except Exception as e:
-        await update.message.reply_text(f"❌ Error: {e}")
+        await update.message.reply_text(friendly_error_message(e))
 
 
 async def cmd_posfill(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
@@ -252,4 +253,4 @@ async def cmd_fills(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text("\n".join(lines))
 
     except Exception as e:
-        await update.message.reply_text(f"Error: {e}")
+        await update.message.reply_text(friendly_error_message(e))

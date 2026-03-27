@@ -14,7 +14,7 @@ from telegram.ext import ContextTypes
 from src.ai.market_analyst import MarketAnalyst
 from src.ai.prompts import DOCUMENT_ANALYSIS_PROMPT, VISION_ANALYSIS_PROMPT
 from src.chart.generator import fetch_klines, generate_chart
-from src.core.message_utils import send_long
+from src.core.message_utils import friendly_error_message, send_long
 
 log = structlog.get_logger()
 
@@ -130,7 +130,7 @@ async def handle_photo(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     except Exception as exc:
         log.error("photo_handler_error", error=str(exc), exc_info=True)
         try:
-            await msg.reply_text(f"Error analyzing image: {type(exc).__name__}: {exc}")
+            await msg.reply_text(friendly_error_message(exc))
         except Exception:
             pass
 
@@ -240,6 +240,6 @@ async def handle_document(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> Non
     except Exception as exc:
         log.error("document_handler_error", error=str(exc), exc_info=True)
         try:
-            await msg.reply_text(f"Error analyzing document: {type(exc).__name__}: {exc}")
+            await msg.reply_text(friendly_error_message(exc))
         except Exception:
             pass

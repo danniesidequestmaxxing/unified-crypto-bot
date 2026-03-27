@@ -4,7 +4,7 @@ from __future__ import annotations
 from telegram import Update
 from telegram.ext import ContextTypes
 
-from src.core.message_utils import send_plain_chunks
+from src.core.message_utils import friendly_error_message, send_plain_chunks
 
 
 def _fmt_usd(value: float) -> str:
@@ -42,7 +42,7 @@ async def cmd_price(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     try:
         data = await coingecko.get_price(ids=coin_id)
     except Exception as e:
-        await update.message.reply_text(f"Error fetching price: {e}")
+        await update.message.reply_text(friendly_error_message(e))
         return
 
     if not data or coin_id not in data:
@@ -89,7 +89,7 @@ async def cmd_top(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     try:
         coins = await coingecko.get_coins_markets(per_page=count)
     except Exception as e:
-        await update.message.reply_text(f"Error fetching market data: {e}")
+        await update.message.reply_text(friendly_error_message(e))
         return
 
     if not coins:

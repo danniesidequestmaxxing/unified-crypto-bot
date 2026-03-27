@@ -9,7 +9,7 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ParseMode
 from telegram.ext import ContextTypes
 
-from src.core.message_utils import escape_html, split_html_chunks
+from src.core.message_utils import escape_html, friendly_error_message, split_html_chunks
 
 log = structlog.get_logger()
 
@@ -242,7 +242,7 @@ async def cmd_ping(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         await elfa.ping()
         await update.message.reply_text("API Status: Online")
     except Exception as e:
-        await update.message.reply_text(f"<b>Error</b>: {escape_html(str(e))}", parse_mode=ParseMode.HTML)
+        await update.message.reply_text(friendly_error_message(e))
 
 
 async def cmd_trending(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
@@ -260,7 +260,7 @@ async def cmd_trending(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         data = await elfa.get_trending_tokens(tf)
         await _send_html(update, _fmt_tokens(data, tf))
     except Exception as e:
-        await update.message.reply_text(f"<b>Error</b>: {escape_html(str(e))}", parse_mode=ParseMode.HTML)
+        await update.message.reply_text(friendly_error_message(e))
 
 
 async def cmd_mentions(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
@@ -282,7 +282,7 @@ async def cmd_mentions(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         data = await elfa.get_top_mentions(ticker, time_window=tf)
         await _send_html(update, _fmt_mentions(data, ticker, tf))
     except Exception as e:
-        await update.message.reply_text(f"<b>Error</b>: {escape_html(str(e))}", parse_mode=ParseMode.HTML)
+        await update.message.reply_text(friendly_error_message(e))
 
 
 async def cmd_search(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
@@ -304,7 +304,7 @@ async def cmd_search(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         data = await elfa.keyword_mentions(keywords, tf)
         await _send_html(update, _fmt_search(data, keywords, tf))
     except Exception as e:
-        await update.message.reply_text(f"<b>Error</b>: {escape_html(str(e))}", parse_mode=ParseMode.HTML)
+        await update.message.reply_text(friendly_error_message(e))
 
 
 async def cmd_account(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
@@ -319,7 +319,7 @@ async def cmd_account(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         data = await elfa.account_smart_stats(username)
         await _send_html(update, _fmt_account(data, username))
     except Exception as e:
-        await update.message.reply_text(f"<b>Error</b>: {escape_html(str(e))}", parse_mode=ParseMode.HTML)
+        await update.message.reply_text(friendly_error_message(e))
 
 
 async def cmd_summary(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
@@ -341,7 +341,7 @@ async def cmd_summary(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         data = await elfa.event_summary(keywords, tf)
         await _send_html(update, _fmt_summary(data, keywords, tf))
     except Exception as e:
-        await update.message.reply_text(f"<b>Error</b>: {escape_html(str(e))}", parse_mode=ParseMode.HTML)
+        await update.message.reply_text(friendly_error_message(e))
 
 
 async def cmd_narratives(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
@@ -359,7 +359,7 @@ async def cmd_narratives(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None
         data = await elfa.trending_narratives(tf)
         await _send_html(update, _fmt_narratives(data, tf))
     except Exception as e:
-        await update.message.reply_text(f"<b>Error</b>: {escape_html(str(e))}", parse_mode=ParseMode.HTML)
+        await update.message.reply_text(friendly_error_message(e))
 
 
 async def cmd_news(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
@@ -381,7 +381,7 @@ async def cmd_news(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         data = await elfa.token_news(ticker, tf)
         await _send_html(update, _fmt_news(data, ticker, tf))
     except Exception as e:
-        await update.message.reply_text(f"<b>Error</b>: {escape_html(str(e))}", parse_mode=ParseMode.HTML)
+        await update.message.reply_text(friendly_error_message(e))
 
 
 async def cmd_cas(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
@@ -401,7 +401,7 @@ async def cmd_cas(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         msg = _fmt_cas(tw, "Twitter/X", tf) + "\n\n" + _fmt_cas(tg, "Telegram", tf)
         await _send_html(update, msg)
     except Exception as e:
-        await update.message.reply_text(f"<b>Error</b>: {escape_html(str(e))}", parse_mode=ParseMode.HTML)
+        await update.message.reply_text(friendly_error_message(e))
 
 
 async def cmd_briefing(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
@@ -428,7 +428,7 @@ async def cmd_briefing(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         )
         await _send_html(update, msg)
     except Exception as e:
-        await update.message.reply_text(f"<b>Error</b>: {escape_html(str(e))}", parse_mode=ParseMode.HTML)
+        await update.message.reply_text(friendly_error_message(e))
 
 
 async def cmd_research(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
@@ -452,7 +452,7 @@ async def cmd_research(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         msg = _fmt_mentions(mentions_data, ticker, tf) + "\n\n" + _fmt_news(news_data, ticker, tf)
         await _send_html(update, msg)
     except Exception as e:
-        await update.message.reply_text(f"<b>Error</b>: {escape_html(str(e))}", parse_mode=ParseMode.HTML)
+        await update.message.reply_text(friendly_error_message(e))
 
 
 async def cmd_chat(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
@@ -476,7 +476,7 @@ async def cmd_chat(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
             text += f"\n\nsession: <code>{escape_html(str(sid))}</code>"
         await _send_html(update, text)
     except Exception as e:
-        await update.message.reply_text(f"<b>Error</b>: {escape_html(str(e))}", parse_mode=ParseMode.HTML)
+        await update.message.reply_text(friendly_error_message(e))
 
 
 # ── Inline Keyboard Callback Handler ─────────────────────────────────────────

@@ -23,7 +23,7 @@ from telegram.ext import ContextTypes
 from src.chart.generator import fetch_klines, generate_chart
 from src.chart.market_sessions import get_current_sessions
 from src.clients.coindesk import fetch_crypto_news
-from src.core.message_utils import send_long, send_plain_chunks
+from src.core.message_utils import friendly_error_message, send_long, send_plain_chunks
 
 # Stocks that are crypto-related and benefit from crypto market context
 _CRYPTO_RELATED_STOCKS: set[str] = {
@@ -253,17 +253,7 @@ async def handle_message(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None
     except Exception as exc:
         log.error("freeform_handler_error", error=str(exc), exc_info=True)
         try:
-            # Friendly message — never dump raw errors to users
-            exc_name = type(exc).__name__
-            if "RateLimit" in exc_name or "429" in str(exc):
-                msg = "⏳ AI is temporarily overloaded. Please try again in a minute."
-            elif "Overloaded" in exc_name or "529" in str(exc):
-                msg = "⏳ AI service is busy right now. Please try again shortly."
-            elif "Authentication" in exc_name or "401" in str(exc):
-                msg = "⚠️ Service configuration error. Please contact the admin."
-            else:
-                msg = "⚠️ Something went wrong processing your request. Please try again."
-            await update.message.reply_text(msg)
+            await update.message.reply_text(friendly_error_message(exc))
         except Exception:
             pass
 

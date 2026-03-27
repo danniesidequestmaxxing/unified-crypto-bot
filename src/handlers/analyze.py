@@ -10,7 +10,7 @@ from telegram.ext import ContextTypes
 
 from src.chart.generator import fetch_klines, generate_chart
 from src.chart.market_sessions import get_current_sessions
-from src.core.message_utils import send_long
+from src.core.message_utils import friendly_error_message, send_long
 
 
 async def cmd_analyze(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
@@ -44,7 +44,11 @@ async def cmd_analyze(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.chat.send_action(ChatAction.TYPING)
 
     await db.record_user_call(chat_id)
-    analysis_text, levels = await engine.suggest_trade(asset, timeframe, extra)
+    try:
+        analysis_text, levels = await engine.suggest_trade(asset, timeframe, extra)
+    except Exception as exc:
+        await update.message.reply_text(friendly_error_message(exc))
+        return
 
     # Store in per-chat context for follow-up freeform messages
     chat_context = ctx.bot_data.setdefault("_chat_context", {})

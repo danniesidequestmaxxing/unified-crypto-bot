@@ -104,3 +104,16 @@ async def send_plain_chunks(update: Update, text: str) -> None:
     """Send plain text in 4000-char chunks."""
     for i in range(0, len(text), 4000):
         await update.message.reply_text(text[i:i + 4000])
+
+
+def friendly_error_message(exc: Exception) -> str:
+    """Convert an exception into a user-friendly Telegram message."""
+    name = type(exc).__name__
+    s = str(exc)
+    if "RateLimit" in name or "429" in s:
+        return "\u23f3 AI is temporarily rate-limited. Please try again in a minute."
+    if "Overloaded" in name or "529" in s:
+        return "\u23f3 AI service is busy right now. Please try again shortly."
+    if "Authentication" in name or "401" in s:
+        return "\u26a0\ufe0f Service configuration error. Please contact the admin."
+    return "\u26a0\ufe0f Something went wrong processing your request. Please try again."
